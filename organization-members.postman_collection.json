@@ -1,0 +1,106 @@
+{
+  "info": {
+    "name": "AI Platform API - Organization Members",
+    "_postman_id": "9baf0d71-2f2b-4a6c-a9b7-4f3b5e8d91c7"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000"
+    },
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "userId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Get Organization Members",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/organization-members",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "organization-members"]
+        }
+      }
+    },
+    {
+      "name": "Add Member",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"userId\": \"{{userId}}\",\n    \"role\": \"MEMBER\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/organization-members",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "organization-members"]
+        }
+      }
+    },
+    {
+      "name": "Update Member Role",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"role\": \"ADMIN\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/organization-members/{{userId}}/role",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "organization-members", "{{userId}}", "role"]
+        }
+      }
+    },
+    {
+      "name": "Remove Member",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/organization-members/{{userId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "organization-members", "{{userId}}"]
+        }
+      }
+    }
+  ]
+}

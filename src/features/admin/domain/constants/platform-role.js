@@ -1,0 +1,6 @@
+export const PlatformRole = Object.freeze({
+  USER: "USER",
+  CUSTOMER: "CUSTOMER",
+  PLATFORM_ADMIN: "PLATFORM_ADMIN",
+  PLATFORM_MANAGER: "PLATFORM_MANAGER",
+});

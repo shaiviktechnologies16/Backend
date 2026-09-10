@@ -1,0 +1,187 @@
+import { AIProvider } from "../interfaces/ai.provider.js";
+import { ProviderError } from "../../common/errors/ProviderError.js";
+
+export class OllamaProvider extends AIProvider {
+  constructor({ getPlatformConfigUseCase }) {
+    super();
+
+    this.getPlatformConfigUseCase = getPlatformConfigUseCase;
+  }
+
+  get name() {
+    return "ollama";
+  }
+
+  async getConfig() {
+    const [baseUrl, model, think] = await Promise.all([
+      this.getPlatformConfigUseCase.getValue("OLLAMA_BASE_URL"),
+      this.getPlatformConfigUseCase.getValue("OLLAMA_MODEL"),
+      this.getPlatformConfigUseCase.getValue("OLLAMA_THINK"),
+    ]);
+
+    return {
+      baseUrl: baseUrl || "http://127.0.0.1:11434",
+      model: model || "qwen3:8b",
+      think: think === "true",
+    };
+  }
+
+  async chat(
+    messages,
+    { model, temperature = 0.7, maxTokens = 2048, tools = [] } = {},
+  ) {
+    try {
+      const config = await this.getConfig();
+
+      const body = {
+        model: model ?? config.model,
+        think: config.think,
+        stream: false,
+        options: {
+          temperature,
+          num_predict: maxTokens,
+        },
+        messages,
+      };
+
+      if (tools.length > 0) {
+        body.tools = tools;
+      }
+
+      const response = await fetch(`${config.baseUrl}/api/chat`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (!response.ok) {
+        throw new ProviderError(
+          `Ollama responded with status ${response.status}.`,
+        );
+      }
+
+      return await response.json();
+    } catch (error) {
+      if (error instanceof ProviderError) {
+        throw error;
+      }
+
+      throw new ProviderError("Unable to connect to Ollama server.", {
+        cause: error,
+      });
+    }
+  }
+
+  async *stream(messages, { model, temperature = 0.7, maxTokens = 2048 } = {}) {
+    try {
+      const config = await this.getConfig();
+
+      const response = await fetch(`${config.baseUrl}/api/chat`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: model ?? config.model,
+          think: config.think,
+          stream: true,
+          options: {
+            temperature,
+            num_predict: maxTokens,
+          },
+          messages,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new ProviderError(
+          `Ollama responded with status ${response.status}.`,
+        );
+      }
+
+      if (!response.body) {
+        throw new ProviderError("Ollama response body is empty.");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      let buffer = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+
+        if (done) {
+          break;
+        }
+
+        buffer += decoder.decode(value, {
+          stream: true,
+        });
+
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.trim()) {
+            continue;
+          }
+
+          const json = JSON.parse(line);
+
+          if (json.done) {
+            return;
+          }
+
+          const message = json.message;
+
+          if (message?.tool_calls?.length) {
+            yield {
+              type: "tool_calls",
+              toolCalls: message.tool_calls,
+            };
+
+            continue;
+          }
+
+          const token = message?.content;
+
+          if (token) {
+            yield {
+              type: "token",
+              content: token,
+            };
+          }
+        }
+      }
+    } catch (error) {
+      if (error instanceof ProviderError) {
+        throw error;
+      }
+
+      throw new ProviderError("Unable to stream from Ollama server.", {
+        cause: error,
+      });
+    }
+  }
+
+  async healthCheck() {
+    try {
+      const config = await this.getConfig();
+
+      const response = await fetch(`${config.baseUrl}/api/tags`, {
+        method: "GET",
+      });
+
+      if (!response.ok) {
+        return "Unhealthy";
+      }
+
+      return "Healthy";
+    } catch {
+      return "Unhealthy";
+    }
+  }
+}

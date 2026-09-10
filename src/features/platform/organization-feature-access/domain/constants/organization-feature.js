@@ -1,0 +1,3 @@
+export const ORGANIZATION_FEATURE = {
+  WHATSAPP: "WHATSAPP",
+};
