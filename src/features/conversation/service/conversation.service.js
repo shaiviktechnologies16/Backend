@@ -26,6 +26,8 @@ export class ConversationService {
     agentToolExecutorService,
     agentToolResolverService,
     getPlatformConfigUseCase,
+    organizationModelAccessRepository = null,
+    organizationModelEntitlementService = null,
   }) {
     this.conversationRepository = conversationRepository;
     this.messageRepository = messageRepository;
@@ -41,6 +43,43 @@ export class ConversationService {
     this.agentToolExecutorService = agentToolExecutorService;
     this.agentToolResolverService = agentToolResolverService;
     this.getPlatformConfigUseCase = getPlatformConfigUseCase;
+    this.organizationModelAccessRepository = organizationModelAccessRepository;
+    this.organizationModelEntitlementService =
+      organizationModelEntitlementService;
+  }
+
+  async validateAgentModelAccess(agent) {
+    const orgId = agent?.project?.organizationId;
+    if (!orgId) return;
+
+    if (this.organizationModelEntitlementService) {
+      try {
+        await this.organizationModelEntitlementService.syncOrganizationModelEntitlements(
+          {
+            organizationId: orgId,
+          },
+        );
+      } catch (err) {
+        console.error(
+          "Failed to auto-sync entitlements during model validation:",
+          err,
+        );
+      }
+    }
+
+    if (this.organizationModelAccessRepository && agent?.aiModelId) {
+      const access = await this.organizationModelAccessRepository.findOne(
+        orgId,
+        agent.aiModelId,
+      );
+      if (!access || access.aiModel?.status !== "ACTIVE") {
+        throw new AppError(
+          "AI model is not authorized for your organization's subscription plan.",
+          403,
+          "MODEL_ACCESS_DENIED",
+        );
+      }
+    }
   }
 
   async getAgent(userId, agentId = null, projectId = null) {
@@ -249,6 +288,8 @@ ${knowledgeContext || noContextMessage}`;
           "ORGANIZATION_NOT_FOUND",
         );
       }
+
+      await this.validateAgentModelAccess(agent);
 
       await this.checkPlanUsageUseCase.execute({
         organizationId: agent.project.organizationId,
@@ -474,6 +515,8 @@ ${knowledgeContext || noContextMessage}`;
           "ORGANIZATION_NOT_FOUND",
         );
       }
+
+      await this.validateAgentModelAccess(agent);
 
       await this.checkPlanUsageUseCase.execute({
         organizationId: agent.project.organizationId,
@@ -1089,6 +1132,8 @@ ${knowledgeContext || noContextMessage}`;
         "ORGANIZATION_NOT_FOUND",
       );
     }
+
+    await this.validateAgentModelAccess(agent);
 
     const agentResolutionMs = Date.now() - agentStartedAt;
 

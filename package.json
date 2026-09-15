@@ -10,6 +10,7 @@
     "migrate": "node src/database/run-migrations.js",
     "seed:platform-config": "node src/database/seeds/platform-config.seed.js",
     "flush:rate-limits": "node scripts/flush-rate-limits.js",
+    "keep-alive": "node scripts/ping-render.js",
     "lint": "eslint .",
     "test": "node --test"
   },

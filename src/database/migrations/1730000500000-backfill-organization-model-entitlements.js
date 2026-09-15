@@ -7,9 +7,18 @@ export class BackfillOrganizationModelEntitlements1730000500000 {
       {
         provider: "ollama",
         model: "qwen3:8b",
-        display_name: "Qwen3-8B",
+        display_name: "Qwen 3 8B",
         capability: "CHAT",
         description: "Standard efficient open-weight LLM for AI agents",
+        status: "ACTIVE",
+      },
+      {
+        provider: "ollama",
+        model: "qwen2.5vl:7b",
+        display_name: "Qwen 2.5 VL 7B",
+        capability: "CHAT",
+        description:
+          "Multimodal vision-language open-weight model for AI agents",
         status: "ACTIVE",
       },
       {
@@ -71,7 +80,7 @@ export class BackfillOrganizationModelEntitlements1730000500000 {
         );
       } else if (planCode === "STARTER") {
         entitledModels = await queryRunner.query(
-          `SELECT id FROM ai_models WHERE status = 'ACTIVE' AND (model = 'qwen3:8b' OR model ILIKE '%qwen%' OR display_name ILIKE '%qwen%' OR model = 'nomic-embed-text:latest' OR model ILIKE '%nomic%' OR display_name ILIKE '%nomic%')`,
+          `SELECT id FROM ai_models WHERE status = 'ACTIVE' AND (model = 'qwen3:8b' OR model ILIKE '%qwen3%' OR display_name ILIKE '%qwen 3%' OR display_name ILIKE '%qwen3%' OR model = 'qwen2.5vl:7b' OR model ILIKE '%qwen2.5vl%' OR model ILIKE '%qwen2.5%' OR display_name ILIKE '%qwen 2.5%' OR display_name ILIKE '%qwen2.5%')`,
         );
       } else {
         // BUSINESS, PREMIUM, or custom active plans
@@ -87,12 +96,23 @@ export class BackfillOrganizationModelEntitlements1730000500000 {
         );
       }
 
-      for (const modelRow of entitledModels) {
+      const entitledModelIds = entitledModels.map((m) => m.id);
+
+      for (const modelId of entitledModelIds) {
         await queryRunner.query(
           `INSERT INTO organization_model_access (organization_id, ai_model_id)
            VALUES ($1, $2)
            ON CONFLICT (organization_id, ai_model_id) DO NOTHING`,
-          [orgId, modelRow.id],
+          [orgId, modelId],
+        );
+      }
+
+      if (entitledModelIds.length > 0) {
+        await queryRunner.query(
+          `DELETE FROM organization_model_access
+           WHERE organization_id = $1
+             AND ai_model_id NOT IN (${entitledModelIds.map((_, i) => `$${i + 2}`).join(", ")})`,
+          [orgId, ...entitledModelIds],
         );
       }
     }

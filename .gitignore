@@ -27,3 +27,20 @@ dist/
 build/
 
 certs/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local TTS generated audio
+local-tts/outputs/
+local-tts/*.wav
+
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Runtime uploads
+uploads/

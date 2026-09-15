@@ -415,6 +415,23 @@ export class IndicF5Provider extends TTSProvider {
 
         const job = jobResult.data;
 
+        if (
+          job &&
+          typeof options.onProgress === "function" &&
+          job.totalGroups !== undefined &&
+          job.completedGroups !== undefined
+        ) {
+          try {
+            await options.onProgress({
+              completedGroups: job.completedGroups,
+              totalGroups: job.totalGroups,
+              progress: job.progress ?? 0,
+            });
+          } catch {
+            // Ignore progress callback errors
+          }
+        }
+
         if (job?.status === "failed") {
           throw new ProviderError(
             job.errorMessage || "IndicF5 TTS generation failed.",

@@ -20,7 +20,16 @@ export class TtsJobProcessor {
 
       const result = await this.synthesizeSpeechUseCase.execute({
         text: job.text,
-        options: job.options || {},
+        options: {
+          ...(job.options || {}),
+          onProgress: async ({ completedGroups, totalGroups }) => {
+            await this.ttsJobRepository.updateProgress(
+              jobId,
+              completedGroups,
+              totalGroups,
+            );
+          },
+        },
       });
 
       console.log("TTS RESULT:", result);

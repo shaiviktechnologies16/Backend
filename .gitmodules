@@ -1,0 +1,3 @@
+[submodule "local-tts/indic-f5-mlx"]
+	path = local-tts/indic-f5-mlx
+	url = https://github.com/yogen-ghodke-113/indic-f5-mlx.git

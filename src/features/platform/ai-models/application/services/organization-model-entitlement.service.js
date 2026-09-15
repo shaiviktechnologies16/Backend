@@ -13,9 +13,18 @@ export class OrganizationModelEntitlementService {
       {
         provider: "ollama",
         model: "qwen3:8b",
-        display_name: "Qwen3-8B",
+        display_name: "Qwen 3 8B",
         capability: "CHAT",
         description: "Standard efficient open-weight LLM for AI agents",
+        status: "ACTIVE",
+      },
+      {
+        provider: "ollama",
+        model: "qwen2.5vl:7b",
+        display_name: "Qwen 2.5 VL 7B",
+        capability: "CHAT",
+        description:
+          "Multimodal vision-language open-weight model for AI agents",
         status: "ACTIVE",
       },
       {
@@ -59,14 +68,53 @@ export class OrganizationModelEntitlementService {
   }
 
   /**
-   * Resolve entitled AI models for a specific plan code.
+   * Resolve entitled AI models for a specific plan code, ID, or slug.
    */
-  async getEntitledModelsForPlan(planCode, runner = this.dataSource) {
+  async getEntitledModelsForPlan(planCodeOrId, runner = this.dataSource) {
     await this.ensureDefaultModelsExist(runner);
 
-    const normalizedCode = (planCode || "").toUpperCase().trim();
+    let planCode = (planCodeOrId || "").toUpperCase().trim();
+    let planSlug = (planCodeOrId || "").toLowerCase().trim();
+    let planName = (planCodeOrId || "").toUpperCase().trim();
 
-    if (normalizedCode === "FREE") {
+    if (planCodeOrId) {
+      const planRes = await runner.query(
+        `SELECT id, code, slug, name FROM plans WHERE id::text = $1 OR code ILIKE $1 OR slug ILIKE $1 OR name ILIKE $1 LIMIT 1`,
+        [planCodeOrId],
+      );
+
+      if (planRes[0]) {
+        planCode = (planRes[0].code || "").toUpperCase().trim();
+        planSlug = (planRes[0].slug || "").toLowerCase().trim();
+        planName = (planRes[0].name || "").toUpperCase().trim();
+      }
+    }
+
+    const isFree =
+      planCode === "FREE" ||
+      planCode.startsWith("F-") ||
+      planSlug === "free" ||
+      planName.includes("FREE");
+
+    const isStarter =
+      planCode === "STARTER" ||
+      planCode.startsWith("S-") ||
+      planSlug === "starter" ||
+      planName.includes("STARTER");
+
+    const isBusiness =
+      planCode === "BUSINESS" ||
+      planCode.startsWith("B-") ||
+      planSlug === "business" ||
+      planName.includes("BUSINESS");
+
+    const isPremium =
+      planCode === "PREMIUM" ||
+      planCode.startsWith("P-") ||
+      planSlug === "premium" ||
+      planName.includes("PREMIUM");
+
+    if (isFree) {
       let models = await runner.query(
         `SELECT id, provider, model, display_name, capability, status
          FROM ai_models
@@ -107,21 +155,22 @@ export class OrganizationModelEntitlementService {
       return models;
     }
 
-    if (normalizedCode === "STARTER") {
+    if (isStarter) {
       let models = await runner.query(
         `SELECT id, provider, model, display_name, capability, status
          FROM ai_models
          WHERE status = 'ACTIVE' AND (
-           model = 'qwen3:8b' OR model ILIKE '%qwen%' OR display_name ILIKE '%qwen%'
-           OR model = 'nomic-embed-text:latest' OR model ILIKE '%nomic%' OR display_name ILIKE '%nomic%'
-         )`,
+           model = 'qwen3:8b' OR model ILIKE '%qwen3%' OR display_name ILIKE '%qwen 3%' OR display_name ILIKE '%qwen3%'
+           OR model = 'qwen2.5vl:7b' OR model ILIKE '%qwen2.5vl%' OR model ILIKE '%qwen2.5%' OR display_name ILIKE '%qwen 2.5%' OR display_name ILIKE '%qwen2.5%'
+         )
+         ORDER BY (CASE WHEN model = 'qwen3:8b' THEN 0 ELSE 1 END) ASC`,
       );
 
       if (models.length === 0) {
         models = await runner.query(
           `SELECT id, provider, model, display_name, capability, status
            FROM ai_models
-           WHERE status = 'ACTIVE'
+           WHERE status = 'ACTIVE' AND capability = 'CHAT'
            LIMIT 2`,
         );
       }
@@ -129,7 +178,7 @@ export class OrganizationModelEntitlementService {
       return models;
     }
 
-    if (normalizedCode === "BUSINESS" || normalizedCode === "PREMIUM") {
+    if (isBusiness || isPremium) {
       return runner.query(
         `SELECT id, provider, model, display_name, capability, status
          FROM ai_models
@@ -170,27 +219,39 @@ export class OrganizationModelEntitlementService {
 
     const db = runner || this.dataSource;
 
-    let targetPlanCode = planCode;
+    let targetPlanCode = planCode || planId;
 
-    if (!targetPlanCode && planId) {
-      const planRes = await db.query(
-        "SELECT code FROM plans WHERE id = $1 LIMIT 1",
-        [planId],
+    if (!targetPlanCode) {
+      const subPlanRes = await db.query(
+        `SELECT s.plan_id, p.code, p.slug, p.name
+         FROM subscriptions s
+         JOIN plans p ON p.id = s.plan_id
+         WHERE s.organization_id = $1 AND s.status = 'ACTIVE'
+         ORDER BY s.updated_at DESC LIMIT 1`,
+        [organizationId],
       );
-      if (planRes[0]?.code) {
-        targetPlanCode = planRes[0].code;
+
+      if (subPlanRes[0]) {
+        targetPlanCode = subPlanRes[0].plan_id || subPlanRes[0].code;
       }
     }
 
     if (!targetPlanCode) {
       const orgPlanRes = await db.query(
-        `SELECT p.code
+        `SELECT o.plan_id, p.code, p.slug, p.name
          FROM organizations o
-         JOIN plans p ON p.id = o.plan_id
+         LEFT JOIN plans p ON p.id = o.plan_id
          WHERE o.id = $1 LIMIT 1`,
         [organizationId],
       );
-      targetPlanCode = orgPlanRes[0]?.code || "FREE";
+
+      if (orgPlanRes[0]) {
+        targetPlanCode = orgPlanRes[0].plan_id || orgPlanRes[0].code || "FREE";
+      }
+    }
+
+    if (!targetPlanCode) {
+      targetPlanCode = "FREE";
     }
 
     const entitledModels = await this.getEntitledModelsForPlan(

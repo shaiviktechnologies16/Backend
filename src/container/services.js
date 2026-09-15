@@ -423,6 +423,9 @@ export const conversationService = new ConversationService({
   agentToolExecutorService: agentToolModule.agentToolExecutorService,
   agentToolResolverService: agentToolModule.agentToolResolverService,
   getPlatformConfigUseCase: platformConfigModule.getPlatformConfigUseCase,
+  organizationModelAccessRepository:
+    organizationModelAccessModule.organizationModelAccessRepository,
+  organizationModelEntitlementService,
 });
 export {
   userRepository,
