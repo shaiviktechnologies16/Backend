@@ -5,7 +5,11 @@ export class CheckPlanUsageUseCase {
     this.planRepository = planRepository;
   }
 
-  async execute({ organizationId, visitorId = null }) {
+  async execute({
+    organizationId,
+    visitorId = null,
+    networkIdentityHash = null,
+  }) {
     const planResult =
       await this.planRepository.findOrganizationPlanWithLimits(organizationId);
 
@@ -65,6 +69,7 @@ export class CheckPlanUsageUseCase {
     const usageOverview = await this.planRepository.getUsageOverview({
       organizationId,
       visitorId,
+      networkIdentityHash,
       dayStart,
       monthStart,
     });
@@ -297,6 +302,107 @@ export class CheckPlanUsageUseCase {
           uniqueVisitors: monthlyUniqueVisitors,
         },
 
+        visitor: {
+          visitorId,
+          dailyMessages: dailyVisitorMessages,
+          monthlyMessages: monthlyVisitorMessages,
+        },
+      },
+    };
+  }
+
+  async getUsageState({
+    organizationId,
+    visitorId = null,
+    networkIdentityHash = null,
+  }) {
+    const planResult =
+      await this.planRepository.findOrganizationPlanWithLimits(organizationId);
+
+    if (!planResult?.plan || !planResult?.limits) {
+      return null;
+    }
+
+    const { plan, limits } = planResult;
+
+    const now = new Date();
+    const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+    const istNow = new Date(now.getTime() + IST_OFFSET_MS);
+
+    const dayStartIST = new Date(istNow);
+    dayStartIST.setUTCHours(0, 0, 0, 0);
+
+    const monthStartIST = new Date(istNow);
+    monthStartIST.setUTCDate(1);
+    monthStartIST.setUTCHours(0, 0, 0, 0);
+
+    const dayStart = new Date(dayStartIST.getTime() - IST_OFFSET_MS);
+    const monthStart = new Date(monthStartIST.getTime() - IST_OFFSET_MS);
+
+    const usageOverview = await this.planRepository.getUsageOverview({
+      organizationId,
+      visitorId,
+      networkIdentityHash,
+      dayStart,
+      monthStart,
+    });
+
+    const {
+      dailyUsage,
+      monthlyUsage,
+      dailyConversations,
+      monthlyConversations,
+      dailyUniqueVisitors,
+      monthlyUniqueVisitors,
+      dailyVisitorMessages,
+      monthlyVisitorMessages,
+    } = usageOverview;
+
+    const requestsRemaining =
+      limits.requestsPerDay === null
+        ? null
+        : Math.max(0, limits.requestsPerDay - dailyUsage.requests);
+
+    const monthlyRequestsRemaining =
+      limits.requestsPerMonth === null
+        ? null
+        : Math.max(0, limits.requestsPerMonth - monthlyUsage.requests);
+
+    return {
+      plan: {
+        id: plan.id,
+        name: plan.name,
+        code: plan.code,
+      },
+      limits: {
+        requestsPerDay: limits.requestsPerDay,
+        requestsPerMonth: limits.requestsPerMonth,
+        tokensPerDay: limits.tokensPerDay,
+        tokensPerMonth: limits.tokensPerMonth,
+        conversationsPerDay: limits.conversationsPerDay,
+        conversationsPerMonth: limits.conversationsPerMonth,
+        uniqueVisitorsPerDay: limits.uniqueVisitorsPerDay,
+        uniqueVisitorsPerMonth: limits.uniqueVisitorsPerMonth,
+        messagesPerVisitorPerDay: limits.messagesPerVisitorPerDay,
+        messagesPerVisitorPerMonth: limits.messagesPerVisitorPerMonth,
+      },
+      usage: {
+        daily: {
+          requests: dailyUsage.requests,
+          requestsLimit: limits.requestsPerDay,
+          requestsRemaining,
+          tokens: dailyUsage.tokens,
+          conversations: dailyConversations,
+          uniqueVisitors: dailyUniqueVisitors,
+        },
+        monthly: {
+          requests: monthlyUsage.requests,
+          requestsLimit: limits.requestsPerMonth,
+          requestsRemaining: monthlyRequestsRemaining,
+          tokens: monthlyUsage.tokens,
+          conversations: monthlyConversations,
+          uniqueVisitors: monthlyUniqueVisitors,
+        },
         visitor: {
           visitorId,
           dailyMessages: dailyVisitorMessages,

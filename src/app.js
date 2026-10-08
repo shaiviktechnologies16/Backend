@@ -55,6 +55,7 @@ import { createOrganizationFeatureAccessRoutes } from "./features/platform/organ
 import { createWorkspaceFeatureAccessRoutes } from "./features/platform/organization-feature-access/presentation/routes/workspace-feature-access.routes.js";
 import { createPublicEnquiryRoutes } from "./features/lead/presentation/routes/public-enquiry.routes.js";
 import { createOrganizationEnquiriesRoutes } from "./features/lead/presentation/routes/organization-enquiries.routes.js";
+import createAiVideoRoutes from "./features/ai-video/presentation/routes/ai-video.routes.js";
 import {
   userRepository,
   jwtService,
@@ -94,11 +95,13 @@ import {
   ttsModule,
   whatsappModule,
   leadModule,
+  aiVideoModule,
 } from "./container/services.js";
 import { errorMiddleware } from "./common/middleware/error.middleware.js";
 import { createEntitlementMiddleware } from "./common/middleware/entitlement.middleware.js";
 
 const app = express();
+app.set("trust proxy", true);
 
 const authMiddleware = authenticate(userRepository, jwtService);
 const entitlementMiddleware = createEntitlementMiddleware(
@@ -559,6 +562,18 @@ app.use(
     organizationMemberRepository:
       organizationMemberModule.organizationMemberRepository,
     rbacRepository,
+  }),
+);
+
+app.use(
+  "/api/v1/ai-video",
+  createAiVideoRoutes({
+    videoProjectController: aiVideoModule.videoProjectController,
+    videoCharacterController: aiVideoModule.videoCharacterController,
+    videoSceneController: aiVideoModule.videoSceneController,
+    aiDirectorController: aiVideoModule.aiDirectorController,
+    authMiddleware,
+    workspaceContextMiddleware: contextModule.middlewares.workspaceContextMiddleware,
   }),
 );
 

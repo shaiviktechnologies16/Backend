@@ -59,7 +59,21 @@ export const createAuthenticationRateLimiter = (customOptions = {}) => {
         return next();
       }
 
-      const redisClient = await connectRedis();
+      let redisClient;
+      try {
+        redisClient = await connectRedis();
+      } catch (redisErr) {
+        console.warn(
+          "[REDIS AUTH RATE LIMIT FAIL OPEN]",
+          redisErr?.message || redisErr,
+        );
+        return next();
+      }
+
+      if (!redisClient || !redisClient.isOpen) {
+        console.warn("[REDIS AUTH RATE LIMIT FAIL OPEN] Client is not ready");
+        return next();
+      }
 
       const redisRateLimitKey = `auth:rate_limit:${clientIpAddress}`;
 
@@ -91,7 +105,13 @@ export const createAuthenticationRateLimiter = (customOptions = {}) => {
 
       next();
     } catch (error) {
-      next(error);
+      if (error instanceof AppError) {
+        return next(error);
+      }
+      console.warn(
+        `[REDIS AUTH RATE LIMIT FAIL OPEN] ${error?.message || error}. Failing open for authentication request.`,
+      );
+      next();
     }
   };
 };

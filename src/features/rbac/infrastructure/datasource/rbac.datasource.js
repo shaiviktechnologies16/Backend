@@ -79,12 +79,17 @@ export class RbacDataSource {
       ...userPermissions.map((item) => item.permission),
     ];
 
+    if (
+      user.platformRole === "PLATFORM_ADMIN" ||
+      user.platformRole === "ADMIN"
+    ) {
+      const allPermissions = await this.getAllPermissions();
+      permissions.push(...allPermissions);
+    }
+
     return [
       ...new Map(
-        permissions.map((permission) => [
-          permission.permissionKey,
-          permission,
-        ]),
+        permissions.map((permission) => [permission.permissionKey, permission]),
       ).values(),
     ];
   }

@@ -6,6 +6,10 @@ export class Usage {
     agentId,
     conversationId,
     visitorId = null,
+    organizationId = null,
+    networkIdentityHash = null,
+    modelName = null,
+    costUsd = 0,
     inputTokens = 0,
     outputTokens = 0,
     totalTokens = 0,
@@ -18,6 +22,10 @@ export class Usage {
     this.agentId = agentId;
     this.conversationId = conversationId;
     this.visitorId = visitorId;
+    this.organizationId = organizationId;
+    this.networkIdentityHash = networkIdentityHash;
+    this.modelName = modelName;
+    this.costUsd = costUsd;
     this.inputTokens = inputTokens;
     this.outputTokens = outputTokens;
     this.totalTokens = totalTokens;

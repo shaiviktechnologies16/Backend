@@ -37,6 +37,14 @@ export class UpdateWorkspaceSettingsUseCase {
       themeConfig: updateDto.themeConfig ?? settings.themeConfig,
       featureFlags: updateDto.featureFlags ??
         settings.featureFlags ?? { ...DEFAULT_FEATURE_FLAGS },
+      dailyBudgetUsd:
+        updateDto.dailyBudgetUsd !== undefined
+          ? updateDto.dailyBudgetUsd
+          : settings.dailyBudgetUsd,
+      monthlyBudgetUsd:
+        updateDto.monthlyBudgetUsd !== undefined
+          ? updateDto.monthlyBudgetUsd
+          : settings.monthlyBudgetUsd,
     });
   }
 }

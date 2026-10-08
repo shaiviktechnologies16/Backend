@@ -6,6 +6,7 @@ import { DeleteWhatsappConnectionUseCase } from "./application/use-cases/delete-
 import { ConnectWhatsappConnectionUseCase } from "./application/use-cases/connect-whatsapp-connection.usecase.js";
 import { HandleEvolutionWebhookUseCase } from "./application/use-cases/handle-evolution-webhook.use-case.js";
 import { SendLeadToWhatsappUseCase } from "./application/use-cases/send-lead-to-whatsapp.usecase.js";
+import { SendHandoverNotificationToWhatsappUseCase } from "./application/use-cases/send-handover-notification-to-whatsapp.usecase.js";
 
 import { CreatePlatformWhatsappConnectionUseCase } from "./application/use-cases/create-platform-whatsapp-connection.usecase.js";
 import { GetPlatformWhatsappConnectionsUseCase } from "./application/use-cases/get-platform-whatsapp-connections.usecase.js";
@@ -56,6 +57,13 @@ export const createWhatsappModule = ({
     platformEvolutionWhatsappProvider,
     enquiryNotificationRecipientRepository,
   });
+
+  const sendHandoverNotificationToWhatsappUseCase =
+    new SendHandoverNotificationToWhatsappUseCase({
+      platformWhatsappConnectionRepository,
+      platformEvolutionWhatsappProvider,
+      enquiryNotificationRecipientRepository,
+    });
 
   const createWhatsappConnectionUseCase = new CreateWhatsappConnectionUseCase({
     whatsappConnectionRepository,
@@ -155,6 +163,7 @@ export const createWhatsappModule = ({
     platformEvolutionWhatsappProvider,
 
     sendLeadToWhatsappUseCase,
+    sendHandoverNotificationToWhatsappUseCase,
 
     createWhatsappConnectionUseCase,
     getWhatsappConnectionsUseCase,

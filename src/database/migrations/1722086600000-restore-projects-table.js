@@ -74,9 +74,37 @@ export class CreateProjectWorkspaceTable1722086600000 {
         onDelete: "CASCADE",
       }),
     ]);
+
+    const hasAgents = await queryRunner.hasTable("agents");
+    if (hasAgents) {
+      const hasProjectId = await queryRunner.hasColumn("agents", "project_id");
+      if (hasProjectId) {
+        await queryRunner.query(`
+          DO $$
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_constraint WHERE conname = 'fk_agents_project'
+            ) THEN
+              ALTER TABLE agents
+              ADD CONSTRAINT fk_agents_project
+              FOREIGN KEY (project_id)
+              REFERENCES projects(id)
+              ON DELETE CASCADE;
+            END IF;
+          END $$;
+        `);
+      }
+    }
   }
 
   async down(queryRunner) {
+    const hasAgents = await queryRunner.hasTable("agents");
+    if (hasAgents) {
+      await queryRunner.query(`
+        ALTER TABLE agents
+        DROP CONSTRAINT IF EXISTS fk_agents_project
+      `);
+    }
     await queryRunner.dropTable("projects");
   }
 }

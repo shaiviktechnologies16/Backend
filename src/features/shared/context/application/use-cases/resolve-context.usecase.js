@@ -27,7 +27,7 @@ export class ResolveContextUseCase {
 
     if (organizationId) {
       organization = await this.resolveOrganizationContextUseCase.execute(
-        user.id,
+        user,
         organizationId,
       );
 
@@ -43,7 +43,7 @@ export class ResolveContextUseCase {
 
       if (membership) {
         organization = await this.resolveOrganizationContextUseCase.execute(
-          user.id,
+          user,
           membership.organizationId,
         );
       }

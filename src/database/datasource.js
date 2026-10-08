@@ -43,6 +43,12 @@ import { EnquiryNotificationRecipientOrmEntity } from "../features/organization-
 import { PlatformWhatsappConnectionOrmEntity } from "../features/whatsapp/infrastructure/database/platform-whatsapp-connection.orm-entity.js";
 import { OrganizationFeatureAccessOrmEntity } from "../features/platform/organization-feature-access/infrastructure/database/organization-feature-access.orm-entity.js";
 import { PaymentOrderOrmEntity } from "../features/payment/infrastructure/database/payment-order.orm-entity.js";
+import { WebhookOrmEntity } from "../features/webhook/infrastructure/database/webhook.orm-entity.js";
+import { WebhookDeliveryOrmEntity } from "../features/webhook/infrastructure/database/webhook-delivery.orm-entity.js";
+import { VideoProjectOrmEntity } from "../features/ai-video/infrastructure/database/video-project.orm-entity.js";
+import { VideoSceneOrmEntity } from "../features/ai-video/infrastructure/database/video-scene.orm-entity.js";
+import { VideoCharacterOrmEntity } from "../features/ai-video/infrastructure/database/video-character.orm-entity.js";
+import { VideoAssetOrmEntity } from "../features/ai-video/infrastructure/database/video-asset.orm-entity.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -110,6 +116,12 @@ export const AppDataSource = new DataSource({
     PlatformWhatsappConnectionOrmEntity,
     EnquiryNotificationRecipientOrmEntity,
     OrganizationFeatureAccessOrmEntity,
+    WebhookOrmEntity,
+    WebhookDeliveryOrmEntity,
+    VideoProjectOrmEntity,
+    VideoSceneOrmEntity,
+    VideoCharacterOrmEntity,
+    VideoAssetOrmEntity,
   ],
 
   migrations: [path.join(__dirname, "migrations/*.js")],

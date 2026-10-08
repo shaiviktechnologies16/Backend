@@ -3,6 +3,7 @@ import { CloudinaryStorageProvider } from "./infrastructure/storage/cloudinary-s
 import { UploadValidator } from "./domain/services/upload-validator.js";
 import { UploadFileUseCase } from "./application/use-cases/upload-file.use-case.js";
 import { UploadLinkUseCase } from "./application/use-cases/upload-link.use-case.js";
+import { GetUploadsByPurposeUseCase } from "./application/use-cases/get-uploads-by-purpose.use-case.js";
 import { UploadController } from "./presentation/controllers/upload.controller.js";
 
 export const createUploadModule = ({ dataSource }) => {
@@ -23,9 +24,15 @@ export const createUploadModule = ({ dataSource }) => {
     uploadValidator,
   });
 
+  const getUploadsByPurposeUseCase = new GetUploadsByPurposeUseCase({
+    uploadRepository,
+    uploadValidator,
+  });
+
   const uploadController = new UploadController({
     uploadFileUseCase,
     uploadLinkUseCase,
+    getUploadsByPurposeUseCase,
   });
 
   return {
@@ -34,6 +41,7 @@ export const createUploadModule = ({ dataSource }) => {
     storageProvider,
     uploadFileUseCase,
     uploadLinkUseCase,
+    getUploadsByPurposeUseCase,
     uploadController,
   };
 };

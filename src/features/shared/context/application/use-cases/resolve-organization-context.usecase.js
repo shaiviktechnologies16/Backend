@@ -9,7 +9,10 @@ export class ResolveOrganizationContextUseCase {
     this.organizationRepository = organizationRepository;
   }
 
-  async execute(user, organizationId) {
+  async execute(userOrUserId, organizationId) {
+    const userId = typeof userOrUserId === "object" ? userOrUserId?.id : userOrUserId;
+    const platformRole = typeof userOrUserId === "object" ? userOrUserId?.platformRole : null;
+
     const organization =
       await this.organizationRepository.findById(organizationId);
 
@@ -22,8 +25,8 @@ export class ResolveOrganizationContextUseCase {
     }
 
     if (
-      user.platformRole === "PLATFORM_ADMIN" ||
-      user.platformRole === "PLATFORM_MANAGER"
+      platformRole === "PLATFORM_ADMIN" ||
+      platformRole === "PLATFORM_MANAGER"
     ) {
       return new OrganizationContextEntity({
         id: organization.id,
@@ -37,7 +40,7 @@ export class ResolveOrganizationContextUseCase {
     const membership =
       await this.organizationMemberRepository.findByOrganizationAndUser(
         organizationId,
-        user.id,
+        userId,
       );
 
     if (!membership) {

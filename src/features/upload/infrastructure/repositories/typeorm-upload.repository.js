@@ -10,9 +10,7 @@ export class TypeOrmUploadRepository extends UploadRepository {
   }
 
   getRepository(manager = null) {
-    return manager
-      ? manager.getRepository(UploadOrmEntity)
-      : this.repository;
+    return manager ? manager.getRepository(UploadOrmEntity) : this.repository;
   }
 
   toDomain(entity) {
@@ -96,5 +94,29 @@ export class TypeOrmUploadRepository extends UploadRepository {
     });
 
     return this.findById(upload.id, manager);
+  }
+
+  async findByPurpose(
+    { purpose, uploadedBy = null, limit = 50, offset = 0 },
+    manager = null,
+  ) {
+    const repository = this.getRepository(manager);
+
+    const where = { purpose };
+    if (uploadedBy) {
+      where.uploadedBy = uploadedBy;
+    }
+
+    const [entities, total] = await repository.findAndCount({
+      where,
+      order: { createdAt: "DESC" },
+      take: limit,
+      skip: offset,
+    });
+
+    return {
+      uploads: entities.map((entity) => this.toDomain(entity)),
+      total,
+    };
   }
 }

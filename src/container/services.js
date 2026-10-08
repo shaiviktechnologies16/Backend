@@ -61,6 +61,11 @@ import { createOrganizationFeatureAccessModule } from "../features/platform/orga
 import { createPaymentModule } from "../features/payment/di.js";
 import { PdfInvoiceGenerator } from "../features/invoice/infrastructure/pdf-invoice.generator.js";
 import { InvoiceService } from "../features/invoice/application/services/invoice.service.js";
+import { createWebhookModule } from "../features/webhook/di.js";
+import { createAiVideoModule } from "../features/ai-video/di.js";
+import { ModelCostCalculatorService } from "../features/usage/application/services/model-cost-calculator.service.js";
+import { BudgetCapGuardService } from "../features/usage/application/services/budget-cap-guard.service.js";
+import { GetTokenUsageAnalyticsUseCase } from "../features/usage/application/use-cases/get-token-usage-analytics.usecase.js";
 
 const promptBuilder = new PromptBuilder();
 export const jwtService = new JwtService();
@@ -144,6 +149,10 @@ const ttsModule = createTTSModule({
   synthesizeSpeechUseCase,
 });
 
+const uploadModule = createUploadModule({
+  dataSource: AppDataSource,
+});
+
 const ollamaProvider = aiProviderFactory.getProviderByName("ollama");
 
 const aiSettingsModule = createAISettingsModule({
@@ -172,10 +181,6 @@ const organizationInvitationModule = createOrganizationInvitationModule({
   userRepository,
   passwordService,
   rbacRepository,
-});
-
-const uploadModule = createUploadModule({
-  dataSource: AppDataSource,
 });
 
 const organizationModule = createOrganizationModule({
@@ -275,12 +280,18 @@ const planModule = createPlansModule({
   organizationModelEntitlementService,
 });
 
+export const webhookModule = createWebhookModule({
+  dataSource: AppDataSource,
+  authenticateJwt: null,
+});
+
 const leadModule = createLeadModule({
   dataSource: AppDataSource,
   agentRepository: agentModule.agentRepository,
   conversationRepository,
   projectRepository,
   sendLeadToWhatsappUseCase: whatsappModule.sendLeadToWhatsappUseCase,
+  webhookDispatcherService: webhookModule.webhookDispatcherService,
 });
 
 const agentToolModule = createAgentToolModule({
@@ -408,6 +419,18 @@ export const authService = new AuthService({
   jwtService,
 });
 
+export const modelCostCalculatorService = new ModelCostCalculatorService();
+export const budgetCapGuardService = new BudgetCapGuardService({
+  usageRepository,
+  workspaceSettingsRepository:
+    workspaceSettingsModule.workspaceSettingsRepository,
+});
+export const getTokenUsageAnalyticsUseCase = new GetTokenUsageAnalyticsUseCase({
+  usageRepository,
+  workspaceSettingsRepository:
+    workspaceSettingsModule.workspaceSettingsRepository,
+});
+
 export const conversationService = new ConversationService({
   conversationRepository,
   messageRepository,
@@ -426,7 +449,37 @@ export const conversationService = new ConversationService({
   organizationModelAccessRepository:
     organizationModelAccessModule.organizationModelAccessRepository,
   organizationModelEntitlementService,
+  modelCostCalculatorService,
+  budgetCapGuardService,
+  webhookDispatcherService: webhookModule.webhookDispatcherService,
+  whatsappConnectionRepository: whatsappModule.whatsappConnectionRepository,
+  whatsappProvider: whatsappModule.evolutionWhatsappProvider,
+  companyProfileRepository: companyProfileModule.companyProfileRepository,
+  sendHandoverNotificationToWhatsappUseCase:
+    whatsappModule.sendHandoverNotificationToWhatsappUseCase,
 });
+
+whatsappModule.handleEvolutionWebhookUseCase.conversationRepository =
+  conversationRepository;
+whatsappModule.handleEvolutionWebhookUseCase.messageRepository =
+  messageRepository;
+whatsappModule.handleEvolutionWebhookUseCase.conversationService =
+  conversationService;
+whatsappModule.handleEvolutionWebhookUseCase.whatsappProvider =
+  whatsappModule.evolutionWhatsappProvider;
+whatsappModule.handleEvolutionWebhookUseCase.agentRepository =
+  agentModule.agentRepository;
+
+const aiVideoModule = createAiVideoModule({
+  dataSource: AppDataSource,
+  aiProviderFactory,
+  synthesizeSpeechUseCase,
+  getPlatformApiKeyValueUseCase: platformApiKeysModule.getPlatformApiKeyValueUseCase,
+  checkPlanUsageUseCase: planModule.checkPlanUsageUseCase,
+  storageProvider: uploadModule.storageProvider,
+  uploadFileUseCase: uploadModule.uploadFileUseCase,
+});
+
 export {
   userRepository,
   aiModelModule,
@@ -468,4 +521,5 @@ export {
   ttsModule,
   whatsappModule,
   leadModule,
+  aiVideoModule,
 };

@@ -41,6 +41,36 @@ export const ConversationOrm = new EntitySchema({
       length: 255,
     },
 
+    isHandover: {
+      name: "is_handover",
+      type: "boolean",
+      default: false,
+    },
+
+    handoverRequestedAt: {
+      name: "handover_requested_at",
+      type: "timestamp",
+      nullable: true,
+    },
+
+    isCompleted: {
+      name: "is_completed",
+      type: "boolean",
+      default: false,
+    },
+
+    completedAt: {
+      name: "completed_at",
+      type: "timestamp",
+      nullable: true,
+    },
+
+    completedBy: {
+      name: "completed_by",
+      type: "uuid",
+      nullable: true,
+    },
+
     createdAt: {
       name: "created_at",
       type: "timestamp",

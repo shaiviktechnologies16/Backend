@@ -5,7 +5,10 @@ export const authenticate = (userRepository, jwtService) => {
         return next();
       }
 
-      const authorization = req.headers.authorization;
+      let authorization = req.headers.authorization;
+      if (!authorization && (req.query?.token || req.query?.accessToken)) {
+        authorization = `Bearer ${req.query.token || req.query.accessToken}`;
+      }
 
       if (!authorization) {
         return res.status(401).json({
@@ -14,7 +17,9 @@ export const authenticate = (userRepository, jwtService) => {
         });
       }
 
-      const token = authorization.substring(7);
+      const token = authorization.startsWith("Bearer ")
+        ? authorization.substring(7)
+        : authorization;
       const payload = jwtService.verifyAccessToken(token);
       const user = await userRepository.findById(payload.userId);
 

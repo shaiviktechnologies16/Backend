@@ -81,12 +81,23 @@ export class KnowledgeSearchService {
 
     const searchStartedAt = Date.now();
 
-    let results = await this.knowledgeChunkRepository.searchSimilar({
-      projectId,
-      embedding: queryEmbedding,
-      limit: limit ?? topK,
-      similarityThreshold,
-    });
+    let results = [];
+    if (typeof this.knowledgeChunkRepository.searchHybrid === "function") {
+      results = await this.knowledgeChunkRepository.searchHybrid({
+        projectId,
+        embedding: queryEmbedding,
+        query: query.trim(),
+        limit: limit ?? topK,
+        similarityThreshold,
+      });
+    } else {
+      results = await this.knowledgeChunkRepository.searchSimilar({
+        projectId,
+        embedding: queryEmbedding,
+        limit: limit ?? topK,
+        similarityThreshold,
+      });
+    }
 
     if (!results || results.length === 0) {
       results = await this.knowledgeChunkRepository.searchSimilar({
@@ -97,7 +108,7 @@ export class KnowledgeSearchService {
       });
     }
 
-    console.log("[RAG VECTOR SEARCH]", {
+    console.log("[RAG HYBRID SEARCH]", {
       durationMs: Date.now() - searchStartedAt,
       resultCount: results.length,
       limit: limit ?? topK,

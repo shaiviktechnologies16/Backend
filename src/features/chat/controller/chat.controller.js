@@ -8,6 +8,8 @@ import { ChatRequest } from "../dto/chat.request.js";
 import { ChatResponse } from "../dto/chat.response.js";
 import { UpdateConversationTitleDto } from "../dto/update-conversation-title.dto.js";
 
+import { workspaceRealtimeEmitter } from "../../../common/utils/workspace-event-emitter.js";
+
 export const chat = asyncHandler(async (req, res) => {
   const request = ChatRequest.from(req.body);
 
@@ -39,17 +41,31 @@ export const chat = asyncHandler(async (req, res) => {
 export const streamChat = asyncHandler(async (req, res) => {
   const request = ChatRequest.from(req.body);
 
+  console.log("[ChatDebug] incoming projectId:", request.projectId);
+  console.log("[ChatDebug] conversationId:", request.conversationId);
+  console.log("[ChatDebug] stream started");
+
   Logger.info("Stream chat request received", {
     endpoint: "/chat/stream",
   });
 
   res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
 
   if (res.flushHeaders) {
     res.flushHeaders();
   }
+
+  const abortController = new AbortController();
+
+  res.on("close", () => {
+    console.log("[ChatDebug] SSE connection closed");
+    if (!res.writableEnded) {
+      abortController.abort();
+    }
+  });
 
   try {
     const stream = conversationService.streamMessage(
@@ -58,13 +74,23 @@ export const streamChat = asyncHandler(async (req, res) => {
       request.message,
       request.agentId,
       request.projectId,
+      { signal: abortController.signal },
     );
 
     for await (const event of stream) {
+      if (
+        res.writableEnded ||
+        abortController.signal.aborted ||
+        res.socket?.destroyed
+      ) {
+        break;
+      }
+
       if (event.type === "conversation") {
         writeEvent(res, "conversation", {
           conversationId: event.conversationId,
         });
+        if (res.flush) res.flush();
         continue;
       }
 
@@ -72,13 +98,16 @@ export const streamChat = asyncHandler(async (req, res) => {
         writeEvent(res, "sources", {
           sources: event.sources,
         });
+        if (res.flush) res.flush();
         continue;
       }
 
       if (event.type === "token") {
+        console.log("[ChatDebug] AI chunk length:", event.content?.length ?? 0);
         writeEvent(res, "token", {
           content: event.content,
         });
+        if (res.flush) res.flush();
         continue;
       }
 
@@ -86,7 +115,7 @@ export const streamChat = asyncHandler(async (req, res) => {
         writeEvent(res, "usage_limit", {
           usage: event.usage,
         });
-
+        if (res.flush) res.flush();
         continue;
       }
 
@@ -94,6 +123,7 @@ export const streamChat = asyncHandler(async (req, res) => {
         writeEvent(res, "tool_call", {
           toolName: event.toolName,
         });
+        if (res.flush) res.flush();
         continue;
       }
 
@@ -102,19 +132,33 @@ export const streamChat = asyncHandler(async (req, res) => {
           toolName: event.toolName,
           content: event.content,
         });
+        if (res.flush) res.flush();
         continue;
       }
 
       if (event.type === "done") {
+        console.log("[ChatDebug] AI generation completed");
+        console.log("[ChatDebug] SSE complete emitted");
         writeEvent(res, "done", {});
+        if (res.flush) res.flush();
       }
     }
   } catch (error) {
-    writeEvent(res, "error", {
-      message: error.message,
-    });
+    if (error.name === "AbortError" || abortController.signal.aborted) {
+      return;
+    }
+
+    console.log("[ChatDebug] SSE error:", error.message);
+
+    if (!res.writableEnded) {
+      writeEvent(res, "error", {
+        message: error.message,
+      });
+    }
   } finally {
-    res.end();
+    if (!res.writableEnded) {
+      res.end();
+    }
   }
 });
 
@@ -132,6 +176,16 @@ export const getConversation = asyncHandler(async (req, res) => {
 
 export const getConversations = asyncHandler(async (req, res) => {
   const { projectId } = req.query;
+
+  console.log(
+    "[ChatDebug] incoming projectId for getConversations:",
+    projectId,
+  );
+
+  if (!projectId || typeof projectId !== "string" || !projectId.trim()) {
+    console.warn("[ChatDebug] getConversations rejected: missing projectId");
+    throw new AppError("Project ID is required.", 400, "PROJECT_ID_REQUIRED");
+  }
 
   const conversations = await conversationService.getConversations(
     req.user.id,
@@ -180,5 +234,123 @@ export const deleteConversation = asyncHandler(async (req, res) => {
   res.status(200).json({
     success: true,
     message: "Conversation deleted successfully.",
+  });
+});
+
+export const sendAgentReply = asyncHandler(async (req, res) => {
+  const { conversationId } = req.params;
+  const { message, content } = req.body;
+
+  const createdMessage = await conversationService.sendAgentReply({
+    userId: req.user.id,
+    conversationId,
+    content: message || content,
+  });
+
+  res.status(200).json({
+    success: true,
+    data: createdMessage,
+  });
+});
+
+export const toggleHandover = asyncHandler(async (req, res) => {
+  const { conversationId } = req.params;
+  const { isHandover } = req.body;
+
+  await conversationService.getConversation(req.user.id, conversationId);
+
+  const updatedConversation = await conversationService.toggleHandoverMode({
+    conversationId,
+    isHandover: Boolean(isHandover),
+  });
+
+  res.status(200).json({
+    success: true,
+    data: updatedConversation,
+  });
+});
+
+export const completeConversation = asyncHandler(async (req, res) => {
+  const { conversationId } = req.params;
+
+  await conversationService.getConversation(req.user.id, conversationId);
+
+  const updatedConversation = await conversationService.completeConversation({
+    userId: req.user.id,
+    conversationId,
+  });
+
+  res.status(200).json({
+    success: true,
+    data: updatedConversation,
+  });
+});
+
+export const setAgentTyping = asyncHandler(async (req, res) => {
+  const { conversationId } = req.params;
+  const { isTyping } = req.body;
+
+  await conversationService.getConversation(req.user.id, conversationId);
+
+  conversationService.setAgentTyping({
+    conversationId,
+    isTyping: Boolean(isTyping),
+  });
+
+  res.status(200).json({
+    success: true,
+    data: { isTyping: Boolean(isTyping) },
+  });
+});
+
+export const streamWorkspaceEvents = asyncHandler(async (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+
+  if (res.flushHeaders) {
+    res.flushHeaders();
+  }
+
+  res.write(": connected\n\n");
+  console.log(
+    `[RealtimeDebug] Workspace SSE client connected. userId=${req.user?.id}`,
+  );
+
+  // Send periodic heartbeat comment to prevent proxy/browser idle timeouts
+  const heartbeatInterval = setInterval(() => {
+    try {
+      res.write(": keep-alive\n\n");
+    } catch {
+      // Connection closed
+    }
+  }, 15000);
+
+  const onMessageCreated = (event) => {
+    console.log(
+      "[RealtimeDebug] Broadcasting message event to Workspace SSE client:",
+      {
+        event: "message.created",
+        conversationId: event.conversationId,
+        projectId: event.projectId,
+        messageId: event.message?.id,
+        role: event.message?.role,
+      },
+    );
+    writeEvent(res, "message.created", event);
+  };
+
+  workspaceRealtimeEmitter.on("conversation.message.created", onMessageCreated);
+
+  res.on("close", () => {
+    clearInterval(heartbeatInterval);
+    console.log(
+      `[RealtimeDebug] Workspace SSE client disconnected. userId=${req.user?.id}`,
+    );
+    workspaceRealtimeEmitter.off(
+      "conversation.message.created",
+      onMessageCreated,
+    );
   });
 });

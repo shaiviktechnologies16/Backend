@@ -152,6 +152,7 @@ export class PlanRepositoryImpl extends PlanRepository {
   async getUsageOverview({
     organizationId,
     visitorId = null,
+    networkIdentityHash = null,
     dayStart,
     monthStart,
   }) {
@@ -201,31 +202,37 @@ export class PlanRepositoryImpl extends PlanRepository {
           )::int AS monthly_conversations,
 
           COUNT(
-            DISTINCT u.visitor_id
+            DISTINCT COALESCE(u.network_identity_hash, u.visitor_id)
           ) FILTER (
             WHERE u.created_at >= $2
-              AND u.visitor_id IS NOT NULL
+              AND (u.network_identity_hash IS NOT NULL OR u.visitor_id IS NOT NULL)
           )::int AS daily_unique_visitors,
 
           COUNT(
-            DISTINCT u.visitor_id
+            DISTINCT COALESCE(u.network_identity_hash, u.visitor_id)
           ) FILTER (
             WHERE u.created_at >= $3
-              AND u.visitor_id IS NOT NULL
+              AND (u.network_identity_hash IS NOT NULL OR u.visitor_id IS NOT NULL)
           )::int AS monthly_unique_visitors,
 
           COUNT(
             u.id
           ) FILTER (
             WHERE u.created_at >= $2
-              AND u.visitor_id = $4
+              AND (
+                ($5::text IS NOT NULL AND u.network_identity_hash = $5)
+                OR ($5::text IS NULL AND u.visitor_id = $4)
+              )
           )::int AS daily_visitor_messages,
 
           COUNT(
             u.id
           ) FILTER (
             WHERE u.created_at >= $3
-              AND u.visitor_id = $4
+              AND (
+                ($5::text IS NOT NULL AND u.network_identity_hash = $5)
+                OR ($5::text IS NULL AND u.visitor_id = $4)
+              )
           )::int AS monthly_visitor_messages
 
         FROM usage u
@@ -246,7 +253,7 @@ export class PlanRepositoryImpl extends PlanRepository {
             OR c.created_at >= $3
           )
         `,
-      [organizationId, dayStart, monthStart, visitorId],
+      [organizationId, dayStart, monthStart, visitorId, networkIdentityHash],
     );
 
     const row = result[0] ?? {};

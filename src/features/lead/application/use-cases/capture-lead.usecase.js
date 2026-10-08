@@ -7,11 +7,13 @@ export class CaptureLeadUseCase {
     agentRepository,
     conversationRepository,
     sendLeadToWhatsappUseCase,
+    webhookDispatcherService,
   }) {
     this.leadRepository = leadRepository;
     this.agentRepository = agentRepository;
     this.conversationRepository = conversationRepository;
     this.sendLeadToWhatsappUseCase = sendLeadToWhatsappUseCase;
+    this.webhookDispatcherService = webhookDispatcherService;
   }
 
   async execute({
@@ -159,6 +161,23 @@ export class CaptureLeadUseCase {
 
     const createdLead = await this.leadRepository.create(lead);
 
+    console.log("[LEAD_CAPTURE_SUCCESS]", {
+      id: createdLead.id,
+      organizationId,
+      name: createdLead.name,
+      phone: createdLead.phone,
+      email: createdLead.email,
+      source: createdLead.source,
+    });
+
+    if (this.webhookDispatcherService) {
+      this.webhookDispatcherService
+        .dispatch(organizationId, "lead.created", createdLead)
+        .catch((err) =>
+          console.error("[WEBHOOK DISPATCH LEAD CREATED ERROR]", err),
+        );
+    }
+
     let whatsapp = null;
 
     try {
@@ -166,7 +185,9 @@ export class CaptureLeadUseCase {
         organizationId,
         lead: createdLead,
       });
+      console.log("[LEAD_WHATSAPP_NOTIFICATION_SENT]", whatsapp);
     } catch (error) {
+      console.error("[LEAD_WHATSAPP_NOTIFICATION_FAILED]", error.message);
       whatsapp = {
         sent: false,
         error: error.message,

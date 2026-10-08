@@ -10,4 +10,8 @@ export class UploadRepository {
   async update() {
     throw new Error("UploadRepository.update() must be implemented.");
   }
+
+  async findByPurpose() {
+    throw new Error("UploadRepository.findByPurpose() must be implemented.");
+  }
 }

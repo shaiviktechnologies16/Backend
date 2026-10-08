@@ -2,11 +2,7 @@ import { Upload } from "../../domain/entities/upload.entity.js";
 import { UploadStatus } from "../../domain/constants/upload-status.js";
 
 export class UploadFileUseCase {
-  constructor({
-    uploadRepository,
-    storageProvider,
-    uploadValidator,
-  }) {
+  constructor({ uploadRepository, storageProvider, uploadValidator }) {
     this.uploadRepository = uploadRepository;
     this.storageProvider = storageProvider;
     this.uploadValidator = uploadValidator;
@@ -20,6 +16,7 @@ export class UploadFileUseCase {
     file,
     metadata = null,
   }) {
+    console.log("[VideoUpload] before upload validation");
     this.uploadValidator.validatePurpose(purpose);
 
     this.uploadValidator.validateContext({
@@ -35,7 +32,9 @@ export class UploadFileUseCase {
     });
 
     this.uploadValidator.validateFile(file);
+    console.log("[VideoUpload] after upload validation");
 
+    console.log("[VideoUpload] before storage upload");
     const storedFile = await this.storageProvider.upload({
       buffer: file.buffer,
       originalName: file.originalname,
@@ -46,6 +45,7 @@ export class UploadFileUseCase {
       organizationId,
       projectId,
     });
+    console.log("[VideoUpload] after storage upload", { key: storedFile?.key });
 
     const upload = new Upload({
       purpose,
@@ -62,6 +62,10 @@ export class UploadFileUseCase {
       metadata,
     });
 
-    return this.uploadRepository.create(upload);
+    console.log("[VideoUpload] before repository save");
+    const createdUpload = await this.uploadRepository.create(upload);
+    console.log("[VideoUpload] after repository save / upload completed");
+
+    return createdUpload;
   }
 }

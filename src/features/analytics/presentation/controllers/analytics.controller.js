@@ -4,12 +4,38 @@ export class AnalyticsController {
     getAnalyticsTrendsUseCase,
     getAnalyticsAgentsUseCase,
     getAnalyticsProjectsUseCase,
+    getTokenUsageAnalyticsUseCase = null,
   }) {
     this.getAnalyticsOverviewUseCase = getAnalyticsOverviewUseCase;
     this.getAnalyticsTrendsUseCase = getAnalyticsTrendsUseCase;
     this.getAnalyticsAgentsUseCase = getAnalyticsAgentsUseCase;
     this.getAnalyticsProjectsUseCase = getAnalyticsProjectsUseCase;
+    this.getTokenUsageAnalyticsUseCase = getTokenUsageAnalyticsUseCase;
   }
+
+  getTokenUsage = async (req, res, next) => {
+    try {
+      const scope = this.getScope(req);
+
+      if (!this.getTokenUsageAnalyticsUseCase) {
+        const { getTokenUsageAnalyticsUseCase } =
+          await import("../../../../container/services.js");
+        this.getTokenUsageAnalyticsUseCase = getTokenUsageAnalyticsUseCase;
+      }
+
+      const result = await this.getTokenUsageAnalyticsUseCase.execute({
+        organizationId: scope.organizationId,
+        days: Number(req.query.days ?? 30),
+      });
+
+      res.json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
 
   getOverview = async (req, res, next) => {
     try {

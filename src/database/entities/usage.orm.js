@@ -30,6 +30,34 @@ export const UsageOrm = new EntitySchema({
       nullable: true,
     },
 
+    organizationId: {
+      name: "organization_id",
+      type: "uuid",
+      nullable: true,
+    },
+
+    networkIdentityHash: {
+      name: "network_identity_hash",
+      type: "varchar",
+      length: 64,
+      nullable: true,
+    },
+
+    modelName: {
+      name: "model_name",
+      type: "varchar",
+      length: 100,
+      nullable: true,
+    },
+
+    costUsd: {
+      name: "cost_usd",
+      type: "numeric",
+      precision: 10,
+      scale: 6,
+      default: 0,
+    },
+
     inputTokens: {
       name: "input_tokens",
       type: "int",

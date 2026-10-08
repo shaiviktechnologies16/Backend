@@ -19,4 +19,8 @@ export class StorageProvider {
   async getUrl() {
     throw new Error("StorageProvider.getUrl() must be implemented.");
   }
+
+  async downloadToTemp(uploadRecord, targetFilePath) {
+    throw new Error("StorageProvider.downloadToTemp() must be implemented.");
+  }
 }

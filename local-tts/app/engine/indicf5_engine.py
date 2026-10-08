@@ -1,7 +1,11 @@
 import logging
-from typing import Dict, Tuple
+from typing import Any, Dict, Tuple
 
-import mlx.core as mx
+try:
+    import mlx.core as mx
+except ImportError:
+    mx = None
+
 import numpy as np
 import soundfile as sf
 
@@ -11,7 +15,7 @@ from app.utils.text_normalizer import TextNormalizer
 logger = logging.getLogger("indicf5.engine")
 
 # Global reference audio conditioning tensor cache to avoid re-reading & re-embedding WAVs
-_REFERENCE_CONDITIONING_CACHE: Dict[Tuple[str, str], Tuple[mx.array, int]] = {}
+_REFERENCE_CONDITIONING_CACHE: Dict[Tuple[str, str], Tuple[Any, int]] = {}
 
 
 class IndicF5Engine:

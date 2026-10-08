@@ -7,12 +7,9 @@ export default function createPlatformUploadRoutes({
 }) {
   const router = express.Router();
 
-  router.post(
-    "/",
-    ...middleware,
-    uploadSingleFile,
-    uploadController.upload,
-  );
+  router.get("/", ...middleware, uploadController.listByPurpose);
+
+  router.post("/", ...middleware, uploadSingleFile, uploadController.upload);
 
   return router;
 }

@@ -1,4 +1,5 @@
 import { asyncHandler } from "../../../../../common/utils/asyncHandler.js";
+import { AppError } from "../../../../../common/errors/AppError.js";
 import { UpdateCompanyProfileDto } from "../../application/dto/update-company-profile.dto.js";
 
 export class CompanyProfileController {

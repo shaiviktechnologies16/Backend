@@ -48,6 +48,22 @@ export const WorkspaceSettingsOrmEntity = new EntitySchema({
       nullable: true,
     },
 
+    dailyBudgetUsd: {
+      name: "daily_budget_usd",
+      type: "numeric",
+      precision: 10,
+      scale: 2,
+      nullable: true,
+    },
+
+    monthlyBudgetUsd: {
+      name: "monthly_budget_usd",
+      type: "numeric",
+      precision: 10,
+      scale: 2,
+      nullable: true,
+    },
+
     createdAt: {
       name: "created_at",
       type: "timestamp",

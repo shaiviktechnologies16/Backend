@@ -70,8 +70,7 @@ cd "$TTS_DIR"
 
 TTS_PID=$!
 
-cd "$BACKEND_DIR"
-
+export INDICF5_BASE_URLS="${INDICF5_BASE_URLS:-http://127.0.0.1:8001}"
 echo "Starting Node.js backend on port 3000..."
 
 npm run dev &

@@ -12,8 +12,14 @@ async function bootstrap() {
     await AppDataSource.initialize();
     console.log("✅ PostgreSQL connected");
 
-    await AppDataSource.runMigrations();
-    console.log("✅ Migrations synchronized");
+    if (process.env.RUN_MIGRATIONS !== "false") {
+      await AppDataSource.runMigrations();
+      console.log("✅ Migrations synchronized");
+    } else {
+      console.log(
+        "ℹ️ Skipping migrations synchronization (RUN_MIGRATIONS=false)",
+      );
+    }
 
     await connectRedis();
     console.log("✅ Redis connected");

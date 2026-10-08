@@ -30,6 +30,12 @@ const createAnalyticsRoutes = ({
 
   router.get("/projects", analyticsPermission, analyticsController.getProjects);
 
+  router.get(
+    "/token-usage",
+    analyticsPermission,
+    analyticsController.getTokenUsage,
+  );
+
   return router;
 };
 

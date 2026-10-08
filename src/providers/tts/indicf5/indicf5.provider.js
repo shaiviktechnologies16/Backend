@@ -161,18 +161,69 @@ export class IndicF5Provider extends TTSProvider {
     super();
 
     this.getPlatformConfigUseCase = getPlatformConfigUseCase;
+    this.workerActiveJobs = new Map();
   }
 
   get name() {
     return "indicf5";
   }
 
-  async getConfig() {
-    const baseUrl =
+  async getWorkerPool() {
+    const rawConfig =
       await this.getPlatformConfigUseCase.getValue("INDICF5_BASE_URL");
 
+    const envUrls = process.env.INDICF5_BASE_URLS;
+    const combined = envUrls || rawConfig || "http://127.0.0.1:8001";
+
+    const urls = combined
+      .split(",")
+      .map((u) => u.trim().replace(/\/+$/, ""))
+      .filter(Boolean);
+
+    return urls.length > 0 ? urls : ["http://127.0.0.1:8001"];
+  }
+
+  selectTargetWorker(workerPool) {
+    if (!workerPool || workerPool.length === 0) {
+      return "http://127.0.0.1:8001";
+    }
+
+    if (workerPool.length === 1) {
+      return workerPool[0];
+    }
+
+    // Least connections selection
+    let bestWorker = workerPool[0];
+    let minJobs = this.workerActiveJobs.get(bestWorker) || 0;
+
+    for (let i = 1; i < workerPool.length; i++) {
+      const worker = workerPool[i];
+      const jobs = this.workerActiveJobs.get(worker) || 0;
+      if (jobs < minJobs) {
+        bestWorker = worker;
+        minJobs = jobs;
+      }
+    }
+
+    return bestWorker;
+  }
+
+  incrementWorkerJobs(url) {
+    this.workerActiveJobs.set(url, (this.workerActiveJobs.get(url) || 0) + 1);
+  }
+
+  decrementWorkerJobs(url) {
+    const count = this.workerActiveJobs.get(url) || 1;
+    this.workerActiveJobs.set(url, Math.max(0, count - 1));
+  }
+
+  async getConfig() {
+    const workerPool = await this.getWorkerPool();
+    const targetUrl = this.selectTargetWorker(workerPool);
+
     return {
-      baseUrl: (baseUrl || "http://127.0.0.1:8001").replace(/\/+$/, ""),
+      baseUrl: targetUrl,
+      workerPool,
     };
   }
 
@@ -261,11 +312,12 @@ export class IndicF5Provider extends TTSProvider {
     }
 
     const startedAt = Date.now();
+    const config = await this.getConfig();
+    let targetBaseUrl = config.baseUrl;
+
+    this.incrementWorkerJobs(targetBaseUrl);
 
     try {
-      const config = await this.getConfig();
-      let targetBaseUrl = config.baseUrl;
-
       const voiceMode =
         options.voiceMode ||
         options.voice_mode ||
@@ -509,6 +561,8 @@ export class IndicF5Provider extends TTSProvider {
       throw new ProviderError("Unable to connect to IndicF5 TTS server.", {
         cause: error,
       });
+    } finally {
+      this.decrementWorkerJobs(targetBaseUrl);
     }
   }
 

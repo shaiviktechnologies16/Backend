@@ -15,6 +15,10 @@ export class ConversationRepository {
     throw new Error("Method not implemented.");
   }
 
+  async findLatestByVisitorAndAgent(visitorId, agentId, manager = null) {
+    throw new Error("Method not implemented.");
+  }
+
   async findAllByProject(projectId, manager = null) {
     throw new Error("Method not implemented.");
   }

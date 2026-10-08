@@ -1,11 +1,23 @@
+import { isHumanHandoverIntent } from "../../../conversation/service/message-intent.service.js";
+
 export class HandleEvolutionWebhookUseCase {
   constructor({
     whatsappConnectionRepository,
     platformWhatsappConnectionRepository,
+    conversationRepository = null,
+    messageRepository = null,
+    conversationService = null,
+    whatsappProvider = null,
+    agentRepository = null,
   }) {
     this.whatsappConnectionRepository = whatsappConnectionRepository;
     this.platformWhatsappConnectionRepository =
       platformWhatsappConnectionRepository;
+    this.conversationRepository = conversationRepository;
+    this.messageRepository = messageRepository;
+    this.conversationService = conversationService;
+    this.whatsappProvider = whatsappProvider;
+    this.agentRepository = agentRepository;
   }
 
   async execute(payload) {
@@ -71,7 +83,8 @@ export class HandleEvolutionWebhookUseCase {
 
     if (
       normalizedEvent === "MESSAGES_UPSERT" ||
-      normalizedEvent === "MESSAGE_UPSERT"
+      normalizedEvent === "MESSAGE_UPSERT" ||
+      normalizedEvent === "MESSAGES.UPSERT"
     ) {
       return this.handleMessagesUpsert(
         connection,
@@ -86,6 +99,161 @@ export class HandleEvolutionWebhookUseCase {
       event,
       connectionType,
     };
+  }
+
+  async handleMessagesUpsert(
+    connection,
+    instanceName,
+    payload,
+    connectionType,
+  ) {
+    const data = payload?.data || payload;
+    const messageObj = data?.message || data;
+    const key = data?.key || messageObj?.key;
+
+    if (!key || key.fromMe) {
+      return { handled: true, reason: "IGNORED_OUTGOING_OR_NO_KEY" };
+    }
+
+    const remoteJid = key.remoteJid || "";
+    if (remoteJid.includes("@g.us")) {
+      return { handled: true, reason: "IGNORED_GROUP_CHAT" };
+    }
+
+    let rawPhone = remoteJid.replace("@s.whatsapp.net", "").replace(/\D/g, "");
+    if (!rawPhone) {
+      return { handled: false, reason: "PHONE_NUMBER_NOT_EXTRACTED" };
+    }
+    const phoneNumber = `+${rawPhone}`;
+
+    const textContent =
+      messageObj?.conversation ||
+      messageObj?.extendedTextMessage?.text ||
+      messageObj?.buttonsResponseMessage?.selectedButtonId ||
+      messageObj?.listResponseMessage?.singleSelectReply?.selectedRowId ||
+      "";
+
+    if (!textContent || !textContent.trim()) {
+      return { handled: true, reason: "NO_TEXT_CONTENT" };
+    }
+
+    const userPrompt = textContent.trim();
+    const visitorId = `wa_${rawPhone}`;
+    const projectId = connection.projectId;
+    const agentId = connection.agentId;
+
+    if (!projectId || !this.conversationRepository) {
+      return {
+        handled: false,
+        reason: "PROJECT_OR_CONVERSATION_REPO_NOT_CONFIGURED",
+      };
+    }
+
+    let conversation = null;
+
+    if (typeof this.conversationRepository.findAllByProject === "function") {
+      const conversations =
+        await this.conversationRepository.findAllByProject(projectId);
+      conversation =
+        conversations.find((c) => c.visitorId === visitorId) || null;
+    }
+
+    if (!conversation) {
+      const { Conversation } =
+        await import("../../../conversation/entity/conversation.entity.js");
+      const newConv = new Conversation({
+        visitorId,
+        projectId,
+        agentId,
+        title: `WhatsApp: ${phoneNumber}`,
+      });
+      conversation = await this.conversationRepository.create(newConv);
+    }
+
+    const isHandoverTriggered = isHumanHandoverIntent(userPrompt);
+
+    if (isHandoverTriggered && !conversation.isHandover) {
+      if (this.conversationService?.toggleHandoverMode) {
+        conversation = await this.conversationService.toggleHandoverMode({
+          conversationId: conversation.id,
+          isHandover: true,
+        });
+      } else {
+        conversation.setHandoverMode(true);
+        await this.conversationRepository.update(conversation);
+      }
+
+      if (
+        this.whatsappProvider &&
+        typeof this.whatsappProvider.sendMessage === "function"
+      ) {
+        await this.whatsappProvider.sendMessage(
+          connection,
+          phoneNumber,
+          "A human support agent has been notified and will respond to your chat shortly.",
+        );
+      }
+
+      return {
+        handled: true,
+        reason: "HANDOVER_TRIGGERED",
+        conversationId: conversation.id,
+        phoneNumber,
+      };
+    }
+
+    if (conversation.isHandover) {
+      console.log(
+        "[WHATSAPP HANDOVER MODE ACTIVE] Skipping AI bot response for:",
+        phoneNumber,
+      );
+      return {
+        handled: true,
+        reason: "HANDOVER_MODE_ACTIVE_SKIPPED_AI",
+        conversationId: conversation.id,
+        phoneNumber,
+      };
+    }
+
+    if (this.conversationService) {
+      try {
+        const aiResponse = await this.conversationService.sendMessagePublic({
+          conversationId: conversation.id,
+          content: userPrompt,
+          agentId,
+          projectId,
+        });
+
+        const replyText =
+          aiResponse?.reply || aiResponse?.message?.content || "";
+
+        if (
+          replyText &&
+          this.whatsappProvider &&
+          typeof this.whatsappProvider.sendMessage === "function"
+        ) {
+          await this.whatsappProvider.sendMessage(
+            connection,
+            phoneNumber,
+            replyText,
+          );
+        }
+
+        return {
+          handled: true,
+          conversationId: conversation.id,
+          reply: replyText,
+        };
+      } catch (err) {
+        console.error("[WHATSAPP AI BOT ERROR]:", err.message);
+        return {
+          handled: false,
+          error: err.message,
+        };
+      }
+    }
+
+    return { handled: true, reason: "CONVERSATION_SERVICE_NOT_INJECTED" };
   }
 
   async handleConnectionUpdate(

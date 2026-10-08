@@ -15,6 +15,7 @@ export const createLeadModule = ({
   conversationRepository,
   projectRepository,
   sendLeadToWhatsappUseCase,
+  webhookDispatcherService,
 }) => {
   const leadRepository = new LeadRepositoryImpl(dataSource);
 
@@ -23,6 +24,7 @@ export const createLeadModule = ({
     agentRepository,
     conversationRepository,
     sendLeadToWhatsappUseCase,
+    webhookDispatcherService,
   });
 
   const createPublicEnquiryUseCase = new CreatePublicEnquiryUseCase({

@@ -1,18 +1,35 @@
 import { OllamaProvider } from "./ollama/ollama.provider.js";
 import { OpenAIProvider } from "./openai/openai.provider.js";
+import { AIWorkerPool } from "./router/ai-worker-pool.js";
+import { AIInferenceRouter } from "./router/ai-inference-router.js";
 
 export function createAIProviderFactory({
   getPlatformApiKeyValueUseCase,
   getPlatformConfigUseCase,
 }) {
-  const providers = {
-    ollama: new OllamaProvider({
-      getPlatformConfigUseCase,
-    }),
+  const workerPool = new AIWorkerPool({
+    getPlatformConfigUseCase,
+  });
 
-    openai: new OpenAIProvider({
-      getPlatformApiKeyValueUseCase,
-    }),
+  const ollamaProvider = new OllamaProvider({
+    getPlatformConfigUseCase,
+    workerPool,
+  });
+
+  const openAIProvider = new OpenAIProvider({
+    getPlatformApiKeyValueUseCase,
+  });
+
+  const aiInferenceRouter = new AIInferenceRouter({
+    workerPool,
+    ollamaProvider,
+    openAIProvider,
+  });
+
+  const providers = {
+    ollama: ollamaProvider,
+    openai: openAIProvider,
+    router: aiInferenceRouter,
   };
 
   return {
@@ -20,7 +37,7 @@ export function createAIProviderFactory({
       const providerName =
         await getPlatformConfigUseCase.getValue("AI_PROVIDER");
 
-      const provider = providers[providerName];
+      const provider = providers[providerName] ?? null;
 
       if (!provider) {
         throw new Error(`Unsupported AI provider: ${providerName}`);
@@ -30,7 +47,18 @@ export function createAIProviderFactory({
     },
 
     getProviderByName(name) {
-      return providers[name] ?? null;
+      if (!name) {
+        return providers.ollama;
+      }
+      return providers[name] ?? providers.ollama;
+    },
+
+    getWorkerPool() {
+      return workerPool;
+    },
+
+    getRouter() {
+      return aiInferenceRouter;
     },
   };
 }

@@ -8,10 +8,17 @@ if (!redisUrl) {
 
 export const redisClient = createClient({
   url: redisUrl,
+  socket: {
+    keepAlive: 10000,
+    reconnectStrategy: (retries) => {
+      const delay = Math.min(retries * 100, 3000);
+      return delay;
+    },
+  },
 });
 
 redisClient.on("error", (error) => {
-  console.error("[REDIS ERROR]", error);
+  console.error("[REDIS ERROR]", error?.message || error);
 });
 
 redisClient.on("connect", () => {
@@ -27,8 +34,12 @@ redisClient.on("reconnecting", () => {
 });
 
 export const connectRedis = async () => {
-  if (!redisClient.isOpen) {
-    await redisClient.connect();
+  if (!redisClient.isOpen && !redisClient.isConnecting) {
+    try {
+      await redisClient.connect();
+    } catch (err) {
+      console.error("[REDIS CONNECT ERROR]", err?.message || err);
+    }
   }
 
   return redisClient;

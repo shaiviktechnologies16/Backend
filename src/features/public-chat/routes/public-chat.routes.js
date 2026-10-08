@@ -18,5 +18,15 @@ export default function createPublicChatRoutes({ controller }) {
     controller.getPublicAgentConfigByAgentId,
   );
 
+  router.get(
+    "/:publicKey/active-conversation",
+    controller.getPublicActiveConversation,
+  );
+
+  router.get(
+    "/:publicKey/conversations/:conversationId/messages",
+    controller.getPublicConversationMessages,
+  );
+
   return router;
 }

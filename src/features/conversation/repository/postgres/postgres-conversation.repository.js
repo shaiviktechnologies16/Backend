@@ -23,6 +23,11 @@ export class PostgresConversationRepository extends ConversationRepository {
       projectId: entity.projectId,
       agentId: entity.agentId,
       title: entity.title,
+      isHandover: Boolean(entity.isHandover),
+      handoverRequestedAt: entity.handoverRequestedAt ?? null,
+      isCompleted: Boolean(entity.isCompleted),
+      completedAt: entity.completedAt ?? null,
+      completedBy: entity.completedBy ?? null,
       createdAt: entity.createdAt,
       updatedAt: entity.updatedAt,
     });
@@ -36,6 +41,11 @@ export class PostgresConversationRepository extends ConversationRepository {
       projectId: conversation.projectId,
       agentId: conversation.agentId,
       title: conversation.title,
+      isHandover: Boolean(conversation.isHandover),
+      handoverRequestedAt: conversation.handoverRequestedAt,
+      isCompleted: Boolean(conversation.isCompleted),
+      completedAt: conversation.completedAt,
+      completedBy: conversation.completedBy,
     };
 
     if (conversation.createdAt !== null) {
@@ -137,6 +147,24 @@ export class PostgresConversationRepository extends ConversationRepository {
     return entities.map((entity) => this.toDomain(entity));
   }
 
+  async findLatestByVisitorAndAgent(visitorId, agentId, manager = null) {
+    if (!visitorId || !agentId) return null;
+
+    const repository = this.getRepository(manager);
+
+    const entity = await repository.findOne({
+      where: {
+        visitorId,
+        agentId,
+      },
+      order: {
+        updatedAt: "DESC",
+      },
+    });
+
+    return this.toDomain(entity);
+  }
+
   async findAllByProject(projectId, manager = null) {
     const repository = this.getRepository(manager);
 
@@ -177,7 +205,7 @@ export class PostgresConversationRepository extends ConversationRepository {
         projectId: In(projectIds),
       },
       order: {
-        createdAt: "DESC",
+        updatedAt: "DESC",
       },
       take: limit,
     });

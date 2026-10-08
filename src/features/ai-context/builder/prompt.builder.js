@@ -86,6 +86,10 @@ Title: ${context.conversation?.title ?? "New Conversation"}`);
     }
 
     sections.push(
+      `Response Style Guidelines: Provide direct, accurate, and concise answers. Avoid repeating the user's question, conversational filler, or unnecessary concluding sentences unless explicitly asked.`,
+    );
+
+    sections.push(
       `Follow the configured agent instructions, organization AI instructions, conversation rules, and available context. Treat these instructions as authoritative for this conversation. Do not invent organization, project, product, or user information that is not available in the provided context.`,
     );
 

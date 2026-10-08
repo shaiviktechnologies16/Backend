@@ -44,3 +44,18 @@ env/
 
 # Runtime uploads
 uploads/
+wan_*
+testVideo.js
+videoService.js
+video-worker/
+output_mock_video.mp4
+scripts/phase2-benchmark.js
+scripts/phase2-finish.js
+scripts/phase2.5-benchmark.js
+scripts/phase3-concurrency-benchmark.js
+scripts/phase5-production-load-test.js
+scripts/phase6-multi-worker-benchmark.js
+scripts/verify-abort.js
+scripts/verify-ollama.js
+scripts/verify-overhead.js
+fetch_latest_avatar.js
