@@ -40,8 +40,14 @@ export class OllamaEmbeddingProvider extends EmbeddingProvider {
         });
 
         if (!response.ok) {
+          const errText = await response.text().catch(() => "");
+          console.error("[OLLAMA EMBED FAILED]", {
+            status: response.status,
+            error: errText,
+            model,
+          });
           throw new ProviderError(
-            `Internal Server error status ${response.status}`,
+            `Ollama embedding server error (status ${response.status}): ${errText}`,
           );
         }
 

@@ -25,5 +25,11 @@ export function createPaymentRoutes({ paymentController, authMiddleware }) {
     paymentController.verifyPayment,
   );
 
+  router.post(
+    "/verify-payment",
+    verifyPaymentValidator,
+    paymentController.verifyPayment,
+  );
+
   return router;
 }

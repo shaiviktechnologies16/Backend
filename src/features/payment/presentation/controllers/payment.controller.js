@@ -12,21 +12,30 @@ export class PaymentController {
   createOrder = async (req, res, next) => {
     try {
       const organizationId =
-        req.body.organizationId ||
-        req.params.organizationId ||
+        req.body?.organizationId ||
+        req.params?.organizationId ||
         req.context?.organizationId ||
         req.user?.organizationId;
 
-      const { planId, billingInterval } = req.body;
+      const { planId, billingInterval, amount, currency, receipt, notes } =
+        req.body || {};
 
       const result = await this.createPaymentOrderUseCase.execute({
         organizationId,
         planId,
         billingInterval,
+        amount,
+        currency,
+        receipt,
+        notes,
       });
 
       res.status(201).json({
         success: true,
+        order_id: result.order_id,
+        amount: result.amount,
+        currency: result.currency,
+        key_id: result.key_id,
         data: result,
       });
     } catch (error) {
@@ -37,23 +46,37 @@ export class PaymentController {
   verifyPayment = async (req, res, next) => {
     try {
       const organizationId =
-        req.body.organizationId ||
-        req.params.organizationId ||
+        req.body?.organizationId ||
+        req.params?.organizationId ||
         req.context?.organizationId ||
         req.user?.organizationId;
 
-      const { razorpayOrderId, razorpayPaymentId, razorpaySignature } =
-        req.body;
+      const {
+        razorpayOrderId,
+        razorpayPaymentId,
+        razorpaySignature,
+        order_id,
+        payment_id,
+        razorpay_signature,
+        signature,
+      } = req.body || {};
 
       const result = await this.verifyPaymentUseCase.execute({
         organizationId,
         razorpayOrderId,
         razorpayPaymentId,
         razorpaySignature,
+        order_id,
+        payment_id,
+        razorpay_signature,
+        signature,
       });
 
       res.json({
         success: true,
+        message: result.message || "Payment verified successfully",
+        order_id: result.order_id,
+        payment_id: result.payment_id,
         data: result,
       });
     } catch (error) {

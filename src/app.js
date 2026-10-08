@@ -48,6 +48,10 @@ import { RbacController } from "./features/rbac/presentation/controllers/rbac.co
 import createAnalyticsRoutes from "./features/analytics/presentation/routes/analytics.routes.js";
 import { createPlanRoutes } from "./features/platform/plans/presentation/routes/plan.routes.js";
 import { createPaymentRoutes } from "./features/payment/presentation/routes/payment.routes.js";
+import {
+  createPaymentOrderValidator,
+  verifyPaymentValidator,
+} from "./features/payment/presentation/validators/payment.validator.js";
 import createTTSRoutes from "./features/tts/routes/tts.routes.js";
 import createWhatsappConnectionRoutes from "./features/whatsapp/presentation/routes/whatsapp-connection.routes.js";
 import createPlatformWhatsappRoutes from "./features/whatsapp/presentation/routes/platform-whatsapp.routes.js";
@@ -130,6 +134,19 @@ app.use(
     paymentController: paymentModule.paymentController,
     authMiddleware,
   }),
+);
+
+// Razorpay Standard Web Checkout Endpoints
+app.post(
+  "/api/create-order",
+  createPaymentOrderValidator,
+  paymentModule.paymentController.createOrder,
+);
+
+app.post(
+  "/api/verify-payment",
+  verifyPaymentValidator,
+  paymentModule.paymentController.verifyPayment,
 );
 
 app.get("/health", (req, res) => {

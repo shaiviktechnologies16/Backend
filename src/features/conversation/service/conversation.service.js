@@ -570,10 +570,18 @@ export class ConversationService {
       };
     }
 
-    const knowledgeResults = await this.knowledgeSearchService.search({
-      projectId,
-      query,
-    });
+    let knowledgeResults = [];
+    try {
+      knowledgeResults = await this.knowledgeSearchService.search({
+        projectId,
+        query,
+      });
+    } catch (ragErr) {
+      console.warn(
+        "[RAG_SEARCH_FALLBACK] Knowledge search failed, continuing with agent prompt instructions:",
+        ragErr.message,
+      );
+    }
 
     const ragSystemPrompt = await this.getPlatformConfigUseCase.getValue(
       "AI_RAG_SYSTEM_PROMPT",
