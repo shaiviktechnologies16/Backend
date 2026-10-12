@@ -124,7 +124,13 @@ export class AdminController {
 
   createAdmin = async (req, res, next) => {
     try {
-      const admin = await this.createAdminUseCase.execute(req.body);
+      const admin = await this.createAdminUseCase.execute({
+        ...req.body,
+        requester: {
+          id: req.user.id,
+          platformRole: req.user.platformRole,
+        },
+      });
 
       return res.status(201).json({
         success: true,

@@ -14,7 +14,7 @@ export class OpenAIProvider extends AIProvider {
   }
 
   get model() {
-    return "gpt-4o-mini";
+    return process.env.OPENAI_MODEL || "gpt-4o-mini";
   }
 
   get maxContextMessages() {
@@ -24,8 +24,27 @@ export class OpenAIProvider extends AIProvider {
   async getClient() {
     const apiKey = await this.getPlatformApiKeyValueUseCase.execute("openai");
 
+    if (!apiKey) {
+      throw new ProviderError(
+        "OpenAI-compatible provider API key is not configured.",
+      );
+    }
+
+    const baseURL = process.env.OPENAI_BASE_URL?.trim();
+
     return new OpenAI({
       apiKey,
+      ...(baseURL ? { baseURL } : {}),
+      ...(baseURL?.includes("openrouter.ai")
+        ? {
+            defaultHeaders: {
+              "HTTP-Referer":
+                process.env.OPENROUTER_SITE_URL ||
+                "https://shaiviktechnologies.in",
+              "X-OpenRouter-Title": "Shaivik AI",
+            },
+          }
+        : {}),
     });
   }
 
@@ -33,22 +52,21 @@ export class OpenAIProvider extends AIProvider {
     try {
       const client = await this.getClient();
 
-      const response = await client.chat.completions.create({
+      return await client.chat.completions.create({
         model: options.model || this.model,
         messages,
         temperature: options.temperature,
         max_tokens: options.maxTokens,
       });
-
-      return response;
     } catch (error) {
       if (error instanceof ProviderError) {
         throw error;
       }
 
-      throw new ProviderError("Unable to generate OpenAI response.", {
-        cause: error,
-      });
+      throw new ProviderError(
+        "Unable to generate Shaivik-AI-compatible response.",
+        { cause: error },
+      );
     }
   }
 
@@ -70,7 +88,7 @@ export class OpenAIProvider extends AIProvider {
       for await (const chunk of stream) {
         const content = chunk.choices?.[0]?.delta?.content;
 
-        if (content) {
+        if (typeof content === "string" && content) {
           yield {
             type: "token",
             content,
@@ -87,8 +105,7 @@ export class OpenAIProvider extends AIProvider {
               inputTokens,
               outputTokens,
               totalTokens:
-                chunk.usage.total_tokens ??
-                inputTokens + outputTokens,
+                chunk.usage.total_tokens ?? inputTokens + outputTokens,
             },
           };
         }
@@ -98,9 +115,10 @@ export class OpenAIProvider extends AIProvider {
         throw error;
       }
 
-      throw new ProviderError("Unable to stream from OpenAI.", {
-        cause: error,
-      });
+      throw new ProviderError(
+        "Unable to stream from Shaivik-AI-compatible provider.",
+        { cause: error },
+      );
     }
   }
 }

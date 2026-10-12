@@ -16,13 +16,52 @@ export class CreateAdminUseCase {
   }
 
   async execute(data) {
-    const { name, email, password, platformRole, permissions = [] } = data;
+    const {
+      name,
+      email,
+      password,
+      platformRole,
+      permissions = [],
+      requester,
+    } = data;
 
-    if (platformRole === PlatformRole.PLATFORM_ADMIN) {
+    // Only authenticated platform administrators and managers
+    // may create platform admin accounts.
+    if (
+      !requester?.id ||
+      ![PlatformRole.PLATFORM_ADMIN, PlatformRole.PLATFORM_MANAGER].includes(
+        requester.platformRole,
+      )
+    ) {
       throw new AppError(
-        "PLATFORM_ADMIN accounts cannot be created manually.",
+        "Only platform administrators and managers can create admin accounts.",
+        403,
+        "ADMIN_CREATION_FORBIDDEN",
+      );
+    }
+
+    // Only an existing PLATFORM_ADMIN may create another PLATFORM_ADMIN.
+    if (
+      platformRole === PlatformRole.PLATFORM_ADMIN &&
+      requester.platformRole !== PlatformRole.PLATFORM_ADMIN
+    ) {
+      throw new AppError(
+        "Only a PLATFORM_ADMIN can create another PLATFORM_ADMIN.",
         403,
         "PLATFORM_ADMIN_CREATION_PROTECTED",
+      );
+    }
+
+    // Reject roles outside the supported platform-admin roles.
+    if (
+      ![PlatformRole.PLATFORM_ADMIN, PlatformRole.PLATFORM_MANAGER].includes(
+        platformRole,
+      )
+    ) {
+      throw new AppError(
+        "Invalid platform role.",
+        400,
+        "INVALID_PLATFORM_ROLE",
       );
     }
 
@@ -32,13 +71,17 @@ export class CreateAdminUseCase {
       throw new AppError("Email already exists.", 409, "EMAIL_ALREADY_EXISTS");
     }
 
-    const passwordHash = await bcrypt.hash(password, 10);
-
     const role = await this.rbacRepository.getRoleByName(platformRole);
 
     if (!role) {
-      throw new AppError("Platform admin role not found.", 500);
+      throw new AppError(
+        "Platform role not found.",
+        500,
+        "PLATFORM_ROLE_NOT_FOUND",
+      );
     }
+
+    const passwordHash = await bcrypt.hash(password, 10);
 
     const admin = await this.adminRepository.createAdmin({
       name,
@@ -49,9 +92,22 @@ export class CreateAdminUseCase {
       isActive: true,
     });
 
-    if (permissions.length > 0) {
+    // Platform admins receive their platform-wide permissions through
+    // the existing role-handling logic, so do not assign manager permissions.
+    if (
+      platformRole === PlatformRole.PLATFORM_MANAGER &&
+      permissions.length > 0
+    ) {
       const permissionEntities =
         await this.permissionRepository.findByKeys(permissions);
+
+      if (permissionEntities.length !== new Set(permissions).size) {
+        throw new AppError(
+          "One or more permissions are invalid.",
+          400,
+          "INVALID_PERMISSIONS",
+        );
+      }
 
       await this.userPermissionRepository.createMany(
         admin.id,
