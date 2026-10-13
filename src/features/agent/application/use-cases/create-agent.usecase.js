@@ -47,21 +47,6 @@ export class CreateAgentUseCase {
 
     const targetOrgId = organizationId || project.organizationId;
 
-    if (this.organizationModelEntitlementService && targetOrgId) {
-      try {
-        await this.organizationModelEntitlementService.syncOrganizationModelEntitlements(
-          {
-            organizationId: targetOrgId,
-          },
-        );
-      } catch (syncErr) {
-        console.error(
-          "Failed to auto-sync organization model entitlements in CreateAgentUseCase:",
-          syncErr,
-        );
-      }
-    }
-
     const existingAgent = await this.agentRepository.findByNameAndProject(
       projectId,
       name,

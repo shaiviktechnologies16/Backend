@@ -10,4 +10,8 @@ export class MessageRepository {
   async deleteByConversationId(conversationId) {
     throw new Error("Method not implemented.");
   }
+
+  async delete(id) {
+    throw new Error("Method not implemented.");
+  }
 }

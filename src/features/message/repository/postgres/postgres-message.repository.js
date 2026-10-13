@@ -114,4 +114,9 @@ export class PostgresMessageRepository extends MessageRepository {
       },
     });
   }
+
+  async delete(id, manager = null) {
+    const repository = this.getRepository(manager);
+    await repository.delete({ id });
+  }
 }

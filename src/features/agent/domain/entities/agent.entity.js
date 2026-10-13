@@ -82,6 +82,10 @@ export class Agent {
     temperature,
     maxTokens,
     widgetConfig,
+    aiModelId,
+    provider,
+    model,
+    aiModel,
   }) {
     if (name !== undefined) {
       this.name = name;
@@ -105,6 +109,22 @@ export class Agent {
 
     if (widgetConfig !== undefined) {
       this.widgetConfig = widgetConfig;
+    }
+
+    if (aiModelId !== undefined) {
+      this.aiModelId = aiModelId;
+    }
+
+    if (provider !== undefined) {
+      this.provider = provider;
+    }
+
+    if (model !== undefined) {
+      this.model = model;
+    }
+
+    if (aiModel !== undefined) {
+      this.aiModel = aiModel;
     }
   }
 }

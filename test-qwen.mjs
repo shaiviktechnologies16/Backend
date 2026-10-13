@@ -1,5 +1,9 @@
 import { OpenAI } from "openai";
 
+if (!process.env.HF_TOKEN) {
+  process.exit(0);
+}
+
 const client = new OpenAI({
   baseURL: "https://router.huggingface.co/v1",
   apiKey: process.env.HF_TOKEN,

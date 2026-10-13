@@ -30,36 +30,22 @@ export class UpdateAgentUseCase {
       allowedRoles: [ProjectMemberRole.OWNER, ProjectMemberRole.ADMIN],
     });
 
+    const updateData = { ...data };
+
     if (
       data?.aiModelId &&
-      data.aiModelId !== agent.aiModelId &&
       this.organizationModelAccessRepository &&
       this.projectRepository
     ) {
       const project = await this.projectRepository.findById(agent.projectId);
       if (project?.organizationId) {
-        if (this.organizationModelEntitlementService) {
-          try {
-            await this.organizationModelEntitlementService.syncOrganizationModelEntitlements(
-              {
-                organizationId: project.organizationId,
-              },
-            );
-          } catch (syncErr) {
-            console.error(
-              "Failed to auto-sync organization model entitlements in UpdateAgentUseCase:",
-              syncErr,
-            );
-          }
-        }
-
         const modelAccess =
           await this.organizationModelAccessRepository.findOne(
             project.organizationId,
             data.aiModelId,
           );
 
-        if (!modelAccess) {
+        if (!modelAccess || !modelAccess.aiModel) {
           throw new AppError(
             "AI model is not available for this organization.",
             403,
@@ -67,7 +53,7 @@ export class UpdateAgentUseCase {
           );
         }
 
-        if (modelAccess.aiModel?.status !== "ACTIVE") {
+        if (modelAccess.aiModel.status !== "ACTIVE") {
           throw new AppError(
             "AI model is not active.",
             400,
@@ -75,17 +61,20 @@ export class UpdateAgentUseCase {
           );
         }
 
-        if (modelAccess.aiModel?.capability !== "CHAT") {
+        if (modelAccess.aiModel.capability !== "CHAT") {
           throw new AppError(
             "Selected AI model is not a chat model.",
             400,
             "AI_MODEL_CAPABILITY_INVALID",
           );
         }
+
+        updateData.aiModelId = modelAccess.aiModel.id;
+        updateData.provider = modelAccess.aiModel.provider;
+        updateData.model = modelAccess.aiModel.model;
+        updateData.aiModel = modelAccess.aiModel;
       }
     }
-
-    const updateData = { ...data };
 
     if (updateData.widgetConfig) {
       updateData.widgetConfig = {

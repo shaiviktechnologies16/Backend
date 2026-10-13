@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
+
+process.env.NODE_ENV = "test";
+
 import { CreatePaymentOrderUseCase } from "./application/use-cases/create-payment-order.usecase.js";
 import { VerifyPaymentUseCase } from "./application/use-cases/verify-payment.usecase.js";
 

@@ -9,12 +9,18 @@ import { OrganizationModelAccessController } from "./presentation/controllers/or
 export function createOrganizationModelAccessModule({
   dataSource,
   organizationModelEntitlementService = null,
+  organizationRepository = null,
+  aiModelRepository = null,
+  onModelAccessChanged = null,
 }) {
   const organizationModelAccessRepository =
     new OrganizationModelAccessRepositoryImpl(dataSource);
 
   const addModelAccessUseCase = new AddModelAccessUseCase({
     organizationModelAccessRepository,
+    organizationRepository,
+    aiModelRepository,
+    onModelAccessChanged,
   });
 
   const getOrganizationModelsUseCase = new GetOrganizationModelsUseCase({
@@ -24,6 +30,7 @@ export function createOrganizationModelAccessModule({
 
   const removeModelAccessUseCase = new RemoveModelAccessUseCase({
     organizationModelAccessRepository,
+    onModelAccessChanged,
   });
 
   const organizationModelAccessController =

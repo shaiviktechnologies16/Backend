@@ -67,13 +67,14 @@ export class AIWorkerPool {
     return this.workers;
   }
 
-  async checkWorkerHealth(worker) {
+  async checkWorkerHealth(worker, force = false) {
     if (!worker.enabled) {
       worker.healthStatus = "DISABLED";
       return worker.healthStatus;
     }
 
     if (
+      !force &&
       worker.healthStatus !== "UNKNOWN" &&
       Date.now() - worker.lastHealthCheckAt < this.healthCacheTtlMs
     ) {
@@ -137,6 +138,11 @@ export class AIWorkerPool {
     if (providerWorkers.length === 0) {
       throw new ProviderError(
         `No AI workers configured for provider "${provider}".`,
+        {
+          provider,
+          model,
+          errorCode: "NO_WORKERS_CONFIGURED",
+        },
       );
     }
 
@@ -170,7 +176,7 @@ export class AIWorkerPool {
 
     if (eligibleWorkers.length === 0) {
       for (const w of providerWorkers) {
-        const status = await this.checkWorkerHealth(w);
+        const status = await this.checkWorkerHealth(w, true);
         if (status === "HEALTHY") {
           eligibleWorkers.push(w);
         }
@@ -182,6 +188,13 @@ export class AIWorkerPool {
         `All AI inference workers for provider "${provider}" and model "${
           model || "default"
         }" are currently UNHEALTHY or unavailable.`,
+        {
+          provider,
+          model,
+          statusCode: 503,
+          errorCode: "ALL_WORKERS_UNAVAILABLE",
+          isTransient: true,
+        },
       );
     }
 

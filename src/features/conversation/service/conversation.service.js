@@ -427,14 +427,20 @@ export class ConversationService {
 
   async validateAgentModelAccess(agent) {
     const orgId = agent?.project?.organizationId;
-    if (!orgId) return;
+    if (!orgId) {
+      throw new AppError(
+        "Agent organization could not be determined.",
+        500,
+        "ORGANIZATION_NOT_FOUND",
+      );
+    }
 
     if (!this.modelAccessCache) {
       this.modelAccessCache = new Map();
     }
-    const cacheKey = `${orgId}:${agent?.aiModelId || "no-model"}`;
+    const cacheKey = `${orgId}:${agent?.aiModelId || agent?.model || "no-model"}`;
     const cached = this.modelAccessCache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < 60_000) {
+    if (cached && Date.now() - cached.timestamp < 30_000) {
       return;
     }
 
@@ -442,35 +448,34 @@ export class ConversationService {
       await this.budgetCapGuardService.checkBudgetCap(orgId);
     }
 
-    if (this.organizationModelAccessRepository && agent?.aiModelId) {
-      let access = await this.organizationModelAccessRepository.findOne(
-        orgId,
-        agent.aiModelId,
-      );
+    if (this.organizationModelAccessRepository) {
+      let access = null;
+      if (agent?.aiModelId) {
+        access = await this.organizationModelAccessRepository.findOne(
+          orgId,
+          agent.aiModelId,
+        );
+      }
 
-      // Only attempt entitlement sync as a fallback if access is not found
-      if (!access && this.organizationModelEntitlementService) {
-        try {
-          await this.organizationModelEntitlementService.syncOrganizationModelEntitlements(
-            {
-              organizationId: orgId,
-            },
-          );
-          access = await this.organizationModelAccessRepository.findOne(
+      // If access not matched by ID (e.g. legacy model ID or direct model name), try matching canonical provider and model
+      if (!access && (agent?.provider || agent?.model)) {
+        const assigned =
+          await this.organizationModelAccessRepository.findByOrganizationId(
             orgId,
-            agent.aiModelId,
           );
-        } catch (err) {
-          console.error(
-            "Failed to auto-sync entitlements during model validation:",
-            err,
-          );
-        }
+        access = assigned.find(
+          (item) =>
+            item.aiModel &&
+            item.aiModel.status === "ACTIVE" &&
+            item.aiModel.provider?.toLowerCase() ===
+              agent.provider?.toLowerCase() &&
+            item.aiModel.model?.toLowerCase() === agent.model?.toLowerCase(),
+        );
       }
 
       if (!access || access.aiModel?.status !== "ACTIVE") {
         throw new AppError(
-          "AI model is not authorized for your organization's subscription plan.",
+          `The configured AI model (${agent?.provider || "unknown"} / ${agent?.model || "unknown"}) is not assigned to your organization. Please update the agent settings to select an authorized model.`,
           403,
           "MODEL_ACCESS_DENIED",
         );
@@ -478,6 +483,19 @@ export class ConversationService {
     }
 
     this.modelAccessCache.set(cacheKey, { timestamp: Date.now() });
+  }
+
+  invalidateModelAccessCache(organizationId) {
+    if (!this.modelAccessCache) return;
+    if (organizationId) {
+      for (const key of this.modelAccessCache.keys()) {
+        if (key.startsWith(`${organizationId}:`)) {
+          this.modelAccessCache.delete(key);
+        }
+      }
+    } else {
+      this.modelAccessCache.clear();
+    }
   }
 
   async getAgent(userId, agentId = null, projectId = null) {
@@ -1668,6 +1686,7 @@ export class ConversationService {
     let conversation;
     let agent;
     let planUsage;
+    let createdUserMessageId = null;
 
     const requestId = options?.requestId ?? "public-req";
 
@@ -1913,6 +1932,7 @@ export class ConversationService {
 
             await this.messageRepository.create(userMessage, manager);
             await this.safeUpdateConversation(conversation, manager);
+            createdUserMessageId = userMessage.id;
 
             console.log("[PublicChatDebug] USER_MESSAGE_CREATE_SUCCESS", {
               requestId,
@@ -2226,11 +2246,6 @@ export class ConversationService {
     const maxToolIterations = 5;
 
     yield {
-      type: "conversation",
-      conversationId: conversation.id,
-    };
-
-    yield {
       type: "sources",
       sources: ragSources,
     };
@@ -2325,6 +2340,26 @@ export class ConversationService {
           errorCode: aiErr.code || aiErr.errorCode,
           message: aiErr.message,
         });
+
+        if (
+          chunkCount === 0 &&
+          createdUserMessageId &&
+          typeof this.messageRepository.delete === "function"
+        ) {
+          try {
+            await this.messageRepository.delete(createdUserMessageId);
+            console.log("[PublicChatDebug] CLEANED_UP_ORPHANED_USER_MESSAGE", {
+              requestId,
+              messageId: createdUserMessageId,
+            });
+          } catch (cleanupErr) {
+            console.warn(
+              "[PublicChatDebug] FAILED_TO_CLEAN_UP_USER_MESSAGE",
+              cleanupErr.message,
+            );
+          }
+        }
+
         throw aiErr;
       }
 
@@ -2513,18 +2548,26 @@ export class ConversationService {
 
     logStage("persistence", persistenceStartedAt);
 
-    const dailyOrganizationLimit = planUsage.limits.requestsPerDay;
+    const dailyOrganizationLimit =
+      planUsage?.limits?.requestsPerDay ?? null;
 
-    const dailyOrganizationUsed = planUsage.usage.daily.requests + 1;
+    const dailyOrganizationUsed =
+      (planUsage?.usage?.daily?.requests ?? 0) + 1;
 
     const dailyOrganizationRemaining =
       dailyOrganizationLimit !== null
         ? Math.max(dailyOrganizationLimit - dailyOrganizationUsed, 0)
         : null;
 
-    const dailyVisitorLimit = planUsage.limits.messagesPerVisitorPerDay;
+    const dailyVisitorLimit =
+      planUsage?.limits?.messagesPerVisitorPerDay ??
+      planUsage?.limits?.requestsPerVisitorPerDay ??
+      null;
 
-    const dailyVisitorUsed = planUsage.usage.visitor.dailyMessages + 1;
+    const dailyVisitorUsed =
+      (planUsage?.usage?.visitor?.dailyMessages ??
+        planUsage?.usage?.visitor?.dailyRequests ??
+        0) + 1;
 
     const dailyVisitorRemaining =
       dailyVisitorLimit !== null

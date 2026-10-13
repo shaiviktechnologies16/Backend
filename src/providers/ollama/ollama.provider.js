@@ -65,6 +65,16 @@ export class OllamaProvider extends AIProvider {
     return headers;
   }
 
+  _isTransientStatus(status) {
+    return (
+      status === 502 ||
+      status === 503 ||
+      status === 504 ||
+      status === 429 ||
+      (typeof status === "number" && status >= 520)
+    );
+  }
+
   async chat(
     messages,
     { model, temperature = 0.7, maxTokens = 2048, tools = [], timeout = null } = {},
@@ -88,16 +98,6 @@ export class OllamaProvider extends AIProvider {
       const config = await this.getConfig();
       const targetModel = model ?? config.model;
 
-      selectedWorker = await this.workerPool.selectWorker({
-        provider: "ollama",
-        model: targetModel,
-      });
-
-      selectedWorker.activeRequests = Math.max(
-        0,
-        (selectedWorker.activeRequests || 0) + 1,
-      );
-
       const body = {
         model: targetModel,
         think: config.think,
@@ -115,68 +115,138 @@ export class OllamaProvider extends AIProvider {
         body.tools = tools;
       }
 
-      let response;
-      try {
-        response = await fetch(`${selectedWorker.baseUrl}/api/chat`, {
-          method: "POST",
-          headers: this._getHeaders(config),
-          body: JSON.stringify(body),
-          signal: controller?.signal,
-        });
-      } catch (fetchErr) {
-        if (
-          fetchErr.name === "AbortError" ||
-          fetchErr.code === "AI_DIRECTOR_TIMEOUT" ||
-          controller?.signal?.aborted
-        ) {
-          const timeoutErr = new ProviderError(
-            `AI_DIRECTOR_TIMEOUT: Ollama request timed out after ${timeout}ms`,
-          );
-          timeoutErr.code = "AI_DIRECTOR_TIMEOUT";
-          throw timeoutErr;
+      let response = null;
+      const maxRetries = 2;
+
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          if (!selectedWorker || selectedWorker.healthStatus === "UNHEALTHY") {
+            selectedWorker = await this.workerPool.selectWorker({
+              provider: "ollama",
+              model: targetModel,
+            });
+            selectedWorker.activeRequests = Math.max(
+              0,
+              (selectedWorker.activeRequests || 0) + 1,
+            );
+          }
+
+          response = await fetch(`${selectedWorker.baseUrl}/api/chat`, {
+            method: "POST",
+            headers: this._getHeaders(config),
+            body: JSON.stringify(body),
+            signal: controller?.signal,
+          });
+
+          if (!response.ok && targetModel !== config.model && response.status === 404) {
+            console.warn(
+              `[OLLAMA MODEL FALLBACK] Model "${targetModel}" failed with status ${response.status}. Retrying with default model "${config.model}".`,
+            );
+            body.model = config.model;
+            response = await fetch(`${selectedWorker.baseUrl}/api/chat`, {
+              method: "POST",
+              headers: this._getHeaders(config),
+              body: JSON.stringify(body),
+              signal: controller?.signal,
+            });
+          }
+
+          if (response.ok) {
+            break;
+          }
+
+          const status = response.status;
+          const isTransient = this._isTransientStatus(status);
+          const errorText = await response.text().catch(() => "");
+
+          console.warn("[OLLAMA CHAT ATTEMPT FAILED]", {
+            attempt: attempt + 1,
+            maxRetries: maxRetries + 1,
+            workerId: selectedWorker?.id,
+            status,
+            isTransient,
+            model: targetModel,
+          });
+
+          if (isTransient && selectedWorker) {
+            selectedWorker.healthStatus = "UNHEALTHY";
+            selectedWorker.lastFailureAt = Date.now();
+          }
+
+          if (selectedWorker) {
+            selectedWorker.activeRequests = Math.max(
+              0,
+              selectedWorker.activeRequests - 1,
+            );
+            selectedWorker = null;
+          }
+
+          if (!isTransient || attempt >= maxRetries) {
+            const err = new ProviderError(
+              `Ollama service is temporarily unavailable (status ${status}).`,
+              {
+                provider: "ollama",
+                model: targetModel,
+                upstreamStatus: status,
+                isTransient,
+                cause: new Error(errorText || `HTTP ${status}`),
+              },
+            );
+            err.code = "AI_DIRECTOR_PROVIDER_UNAVAILABLE";
+            throw err;
+          }
+
+          const backoffMs = (attempt + 1) * 350;
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
+        } catch (fetchErr) {
+          if (
+            fetchErr.name === "AbortError" ||
+            fetchErr.code === "AI_DIRECTOR_TIMEOUT" ||
+            controller?.signal?.aborted
+          ) {
+            const timeoutErr = new ProviderError(
+              `AI_DIRECTOR_TIMEOUT: Ollama request timed out after ${timeout}ms`,
+            );
+            timeoutErr.code = "AI_DIRECTOR_TIMEOUT";
+            throw timeoutErr;
+          }
+
+          if (fetchErr instanceof ProviderError) {
+            throw fetchErr;
+          }
+
+          if (selectedWorker) {
+            selectedWorker.healthStatus = "UNHEALTHY";
+            selectedWorker.lastFailureAt = Date.now();
+            selectedWorker.activeRequests = Math.max(
+              0,
+              selectedWorker.activeRequests - 1,
+            );
+            selectedWorker = null;
+          }
+
+          console.warn("[AI WORKER FETCH ERROR]", {
+            attempt: attempt + 1,
+            maxRetries: maxRetries + 1,
+            error: fetchErr.message,
+            model: targetModel,
+          });
+
+          if (attempt >= maxRetries) {
+            throw new ProviderError("Unable to connect to Ollama server.", {
+              provider: "ollama",
+              model: targetModel,
+              isTransient: true,
+              cause: fetchErr,
+            });
+          }
+
+          const backoffMs = (attempt + 1) * 350;
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
         }
-
-        selectedWorker.healthStatus = "UNHEALTHY";
-        console.warn(
-          "[AI WORKER FETCH ERROR]",
-          `Worker ${selectedWorker.id} (${selectedWorker.baseUrl}) failed. Retrying worker selection.`,
-          fetchErr,
-        );
-
-        selectedWorker.activeRequests = Math.max(
-          0,
-          selectedWorker.activeRequests - 1,
-        );
-        selectedWorker = await this.workerPool.selectWorker({
-          provider: "ollama",
-          model: targetModel,
-        });
-
-        selectedWorker.activeRequests = Math.max(
-          0,
-          (selectedWorker.activeRequests || 0) + 1,
-        );
-
-        response = await fetch(`${selectedWorker.baseUrl}/api/chat`, {
-          method: "POST",
-          headers: this._getHeaders(config),
-          body: JSON.stringify(body),
-          signal: controller?.signal,
-        });
-      }
-
-      if (!response.ok) {
-        const errorText = await response.text();
-
-        const err = new ProviderError(
-          `Internal Server error status ${response.status}: ${errorText}`,
-        );
-        err.code = "AI_DIRECTOR_PROVIDER_UNAVAILABLE";
-        throw err;
       }
 
       const result = await response.json();
-
       return result;
     } catch (error) {
       if (
@@ -224,18 +294,6 @@ export class OllamaProvider extends AIProvider {
       const config = await this.getConfig();
       const targetModel = model ?? config.model;
 
-      const selectionStartedAt = Date.now();
-      selectedWorker = await this.workerPool.selectWorker({
-        provider: "ollama",
-        model: targetModel,
-      });
-      workerSelectionDurationMs = Date.now() - selectionStartedAt;
-
-      selectedWorker.activeRequests = Math.max(
-        0,
-        (selectedWorker.activeRequests || 0) + 1,
-      );
-
       const body = {
         model: targetModel,
         think: config.think,
@@ -263,92 +321,169 @@ export class OllamaProvider extends AIProvider {
         model: body.model,
       });
 
-      console.log("[OLLAMA STREAM REQUEST]", {
-        workerId: selectedWorker.id,
-        baseUrl: selectedWorker.baseUrl,
-        model: body.model,
-        think: body.think,
-        temperature: body.options.temperature,
-        maxTokens: body.options.num_predict,
-        messageCount: messages.length,
-        promptCharacters,
-        toolCount: tools?.length ?? 0,
-        concurrencyAtRequest: selectedWorker.activeRequests,
-        workerSelectionDurationMs,
-      });
+      let response = null;
+      const maxRetries = 2;
 
-      let response;
-      try {
-        response = await fetch(`${selectedWorker.baseUrl}/api/chat`, {
-          method: "POST",
-          headers: this._getHeaders(config),
-          body: JSON.stringify(body),
-          signal,
-        });
-      } catch (fetchErr) {
-        if (fetchErr.name === "AbortError") {
-          throw fetchErr;
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          if (!selectedWorker || selectedWorker.healthStatus === "UNHEALTHY") {
+            const selectionStartedAt = Date.now();
+            selectedWorker = await this.workerPool.selectWorker({
+              provider: "ollama",
+              model: targetModel,
+            });
+            workerSelectionDurationMs = Date.now() - selectionStartedAt;
+
+            selectedWorker.activeRequests = Math.max(
+              0,
+              (selectedWorker.activeRequests || 0) + 1,
+            );
+          }
+
+          console.log("[OLLAMA STREAM REQUEST]", {
+            attempt: attempt + 1,
+            workerId: selectedWorker.id,
+            baseUrl: selectedWorker.baseUrl,
+            model: body.model,
+            think: body.think,
+            temperature: body.options.temperature,
+            maxTokens: body.options.num_predict,
+            messageCount: messages.length,
+            promptCharacters,
+            toolCount: tools?.length ?? 0,
+            concurrencyAtRequest: selectedWorker.activeRequests,
+            workerSelectionDurationMs,
+          });
+
+          response = await fetch(`${selectedWorker.baseUrl}/api/chat`, {
+            method: "POST",
+            headers: this._getHeaders(config),
+            body: JSON.stringify(body),
+            signal,
+          });
+
+          if (!response.ok && targetModel !== config.model && response.status === 404) {
+            console.warn(
+              `[OLLAMA MODEL FALLBACK] Model "${targetModel}" failed with status ${response.status}. Retrying with default model "${config.model}".`,
+            );
+            body.model = config.model;
+            response = await fetch(`${selectedWorker.baseUrl}/api/chat`, {
+              method: "POST",
+              headers: this._getHeaders(config),
+              body: JSON.stringify(body),
+              signal,
+            });
+          }
+
+          if (response.ok) {
+            console.log("[PublicChatDebug] OLLAMA_REQUEST_CONNECTED");
+            console.log("[OLLAMA STREAM RESPONSE]", {
+              status: response.status,
+              timeToResponseMs: Date.now() - requestStartedAt,
+              workerId: selectedWorker.id,
+              concurrencyAtRequest: selectedWorker.activeRequests,
+            });
+            break;
+          }
+
+          const status = response.status;
+          const isTransient = this._isTransientStatus(status);
+          const errorText = await response.text().catch(() => "");
+
+          console.warn("[OLLAMA STREAM CONNECT ATTEMPT FAILED]", {
+            attempt: attempt + 1,
+            maxRetries: maxRetries + 1,
+            workerId: selectedWorker?.id,
+            status,
+            isTransient,
+            model: targetModel,
+          });
+
+          if (isTransient && selectedWorker) {
+            selectedWorker.healthStatus = "UNHEALTHY";
+            selectedWorker.lastFailureAt = Date.now();
+          }
+
+          if (selectedWorker) {
+            selectedWorker.activeRequests = Math.max(
+              0,
+              selectedWorker.activeRequests - 1,
+            );
+            selectedWorker = null;
+          }
+
+          if (!isTransient || attempt >= maxRetries) {
+            throw new ProviderError(
+              `Ollama service is temporarily unavailable (status ${status}).`,
+              {
+                provider: "ollama",
+                model: targetModel,
+                upstreamStatus: status,
+                isTransient,
+                cause: new Error(errorText || `HTTP ${status}`),
+              },
+            );
+          }
+
+          const backoffMs = (attempt + 1) * 350;
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
+        } catch (fetchErr) {
+          if (fetchErr.name === "AbortError" || signal?.aborted) {
+            throw fetchErr;
+          }
+
+          if (fetchErr instanceof ProviderError) {
+            throw fetchErr;
+          }
+
+          if (selectedWorker) {
+            selectedWorker.healthStatus = "UNHEALTHY";
+            selectedWorker.lastFailureAt = Date.now();
+            selectedWorker.activeRequests = Math.max(
+              0,
+              selectedWorker.activeRequests - 1,
+            );
+            selectedWorker = null;
+          }
+
+          console.warn("[AI WORKER STREAM FETCH ERROR]", {
+            attempt: attempt + 1,
+            maxRetries: maxRetries + 1,
+            error: fetchErr.message,
+            model: targetModel,
+          });
+
+          if (attempt >= maxRetries) {
+            throw new ProviderError("Unable to connect to Ollama server.", {
+              provider: "ollama",
+              model: targetModel,
+              isTransient: true,
+              cause: fetchErr,
+            });
+          }
+
+          const backoffMs = (attempt + 1) * 350;
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
         }
-
-        selectedWorker.healthStatus = "UNHEALTHY";
-        console.warn(
-          "[AI WORKER FETCH ERROR]",
-          `Worker ${selectedWorker.id} (${selectedWorker.baseUrl}) failed. Retrying worker selection.`,
-          fetchErr,
-        );
-
-        selectedWorker.activeRequests = Math.max(
-          0,
-          selectedWorker.activeRequests - 1,
-        );
-        selectedWorker = await this.workerPool.selectWorker({
-          provider: "ollama",
-          model: targetModel,
-        });
-
-        selectedWorker.activeRequests = Math.max(
-          0,
-          (selectedWorker.activeRequests || 0) + 1,
-        );
-
-        response = await fetch(`${selectedWorker.baseUrl}/api/chat`, {
-          method: "POST",
-          headers: this._getHeaders(config),
-          body: JSON.stringify(body),
-          signal,
-        });
       }
 
-      console.log("[PublicChatDebug] OLLAMA_REQUEST_CONNECTED");
-
-      console.log("[OLLAMA STREAM RESPONSE]", {
-        status: response.status,
-        timeToResponseMs: Date.now() - requestStartedAt,
-        workerId: selectedWorker.id,
-        concurrencyAtRequest: selectedWorker.activeRequests,
-      });
-
-      if (!response.ok && targetModel !== config.model) {
-        console.warn(
-          `[OLLAMA MODEL FALLBACK] Model "${targetModel}" failed with status ${response.status}. Retrying with default model "${config.model}".`,
-        );
-        body.model = config.model;
-        response = await fetch(`${selectedWorker.baseUrl}/api/chat`, {
-          method: "POST",
-          headers: this._getHeaders(config),
-          body: JSON.stringify(body),
-          signal,
-        });
-      }
-
-      if (!response.ok) {
+      if (!response || !response.ok) {
         throw new ProviderError(
-          `Internal Server error status ${response.status}`,
+          `Ollama service is temporarily unavailable (status ${response?.status || 502}).`,
+          {
+            provider: "ollama",
+            model: targetModel,
+            upstreamStatus: response?.status || 502,
+            isTransient: true,
+          },
         );
       }
 
       if (!response.body) {
-        throw new ProviderError("Ollama response body is empty.");
+        throw new ProviderError("Ollama response body is empty.", {
+          provider: "ollama",
+          model: targetModel,
+        });
       }
 
       const reader = response.body.getReader();

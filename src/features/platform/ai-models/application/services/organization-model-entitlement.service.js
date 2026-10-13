@@ -272,21 +272,8 @@ export class OrganizationModelEntitlementService {
       }
     }
 
-    // Handle downgrades: remove model access rows no longer permitted under the plan
-    if (entitledModelIds.length > 0) {
-      await db.query(
-        `DELETE FROM organization_model_access
-         WHERE organization_id = $1
-           AND ai_model_id NOT IN (${entitledModelIds.map((_, i) => `$${i + 2}`).join(", ")})`,
-        [organizationId, ...entitledModelIds],
-      );
-    } else {
-      await db.query(
-        `DELETE FROM organization_model_access WHERE organization_id = $1`,
-        [organizationId],
-      );
-    }
-
+    // Note: Do not delete existing organization_model_access rows. Administrator model assignments
+    // must persist independently of plan default seeding.
     return {
       organizationId,
       planCode: targetPlanCode,

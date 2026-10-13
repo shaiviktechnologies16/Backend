@@ -173,8 +173,7 @@ test("OrganizationModelEntitlementService syncOrganizationModelEntitlements runs
   assert.strictEqual(inserted.length, 1);
   assert.strictEqual(inserted[0][0], "org-uuid-123");
   assert.strictEqual(inserted[0][1], "model-qwen-123");
-  assert.strictEqual(deleted.length, 1);
-  assert.strictEqual(deleted[0][0], "org-uuid-123");
+  assert.strictEqual(deleted.length, 0);
 });
 
 test("OrganizationModelEntitlementService correctly resolves custom plan code S-001 to STARTER models", async () => {

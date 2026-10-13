@@ -10,22 +10,7 @@ export class WorkspaceModelRepositoryImpl extends WorkspaceModelRepository {
   }
 
   async findAvailableModels(organizationId) {
-    if (this.organizationModelEntitlementService) {
-      try {
-        await this.organizationModelEntitlementService.syncOrganizationModelEntitlements(
-          {
-            organizationId,
-          },
-        );
-      } catch (syncErr) {
-        console.error(
-          "Failed to auto-sync organization model entitlements in workspace repository:",
-          syncErr,
-        );
-      }
-    }
-
-    const accesses = await this.repository.find({
+    let accesses = await this.repository.find({
       where: {
         organizationId,
         aiModel: {
@@ -36,6 +21,35 @@ export class WorkspaceModelRepositoryImpl extends WorkspaceModelRepository {
         aiModel: true,
       },
     });
+
+    if (
+      (!accesses || accesses.length === 0) &&
+      this.organizationModelEntitlementService
+    ) {
+      try {
+        await this.organizationModelEntitlementService.syncOrganizationModelEntitlements(
+          {
+            organizationId,
+          },
+        );
+        accesses = await this.repository.find({
+          where: {
+            organizationId,
+            aiModel: {
+              status: "ACTIVE",
+            },
+          },
+          relations: {
+            aiModel: true,
+          },
+        });
+      } catch (syncErr) {
+        console.error(
+          "Failed to auto-seed organization model entitlements in workspace repository:",
+          syncErr,
+        );
+      }
+    }
 
     return accesses.map((access) => ({
       id: access.aiModel.id,

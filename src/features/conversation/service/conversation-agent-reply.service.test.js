@@ -236,9 +236,10 @@ assert.equal(
   0,
   "No assistant handover notice should be created when handover is active",
 );
-assert.equal(streamEvents.length, 2);
+assert.equal(streamEvents.length, 3);
 assert.equal(streamEvents[0].type, "conversation");
-assert.equal(streamEvents[1].type, "done");
+assert.equal(streamEvents[1].type, "token");
+assert.equal(streamEvents[2].type, "done");
 
 // Test 6: sendPublicMessage during active handover returns reply: null and 0 assistant notices
 assistantNoticeCount = 0;

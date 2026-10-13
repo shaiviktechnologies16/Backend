@@ -1,8 +1,8 @@
 import { createHash } from "crypto";
 
 import { asyncHandler } from "../../../common/utils/asyncHandler.js";
-import { conversationService } from "../../../container/services.js";
 import { ValidationError } from "../../../common/errors/ValidationError.js";
+import { ProviderError } from "../../../common/errors/ProviderError.js";
 import { writeEvent } from "../../../common/utils/sse.js";
 import { Logger } from "../../../common/utils/logger.js";
 
@@ -24,20 +24,37 @@ const getClientIpHash = (req) => {
 export const createPublicChatController = ({
   publicAgentConfigUseCase,
   checkPublicChatAbuseUseCase,
+  conversationService: injectedConvService = null,
+  publicChatStreamUseCase = null,
 }) => {
+  let convService = injectedConvService;
+
+  const getConversationService = async () => {
+    if (convService) return convService;
+    if (controller?.conversationService) return controller.conversationService;
+    const services = await import("../../../container/services.js");
+    return services.conversationService;
+  };
+
   const checkAbuse = async (req) => {
+    if (!publicAgentConfigUseCase || !checkPublicChatAbuseUseCase) {
+      return;
+    }
+
     const agent = await publicAgentConfigUseCase.execute(req.params.publicKey);
 
     const ipHash = getClientIpHash(req);
 
-    const result = await checkPublicChatAbuseUseCase.execute({
+    await checkPublicChatAbuseUseCase.execute({
       organizationId: agent.organizationId,
       visitorId: req.visitorId ?? null,
       ipHash,
     });
   };
 
-  return {
+  const controller = {
+    conversationService: injectedConvService,
+
     publicChat: asyncHandler(async (req, res) => {
       const { message, conversationId } = req.body;
 
@@ -47,7 +64,8 @@ export const createPublicChatController = ({
 
       await checkAbuse(req);
 
-      const result = await conversationService.sendPublicMessage(
+      const service = await getConversationService();
+      const result = await service.sendPublicMessage(
         req.params.publicKey,
         message.trim(),
         req.visitorId ?? null,
@@ -79,6 +97,10 @@ export const createPublicChatController = ({
       res.setHeader("Connection", "keep-alive");
       res.setHeader("X-Accel-Buffering", "no");
 
+      if (res.socket) {
+        res.socket.setNoDelay(true);
+      }
+
       if (res.flushHeaders) {
         res.flushHeaders();
       }
@@ -100,18 +122,35 @@ export const createPublicChatController = ({
       try {
         await checkAbuse(req);
 
-        const stream = conversationService.streamPublicMessage(
-          req.params.publicKey,
-          message.trim(),
-          req.visitorId ?? null,
-          conversationId ?? null,
-          req.networkIdentityHash ?? null,
-          {
-            signal: abortController.signal,
-            requestId,
-            clientMessageId: clientMessageId || null,
-          },
-        );
+        let stream;
+        if (publicChatStreamUseCase?.execute) {
+          stream = publicChatStreamUseCase.execute({
+            publicKey: req.params.publicKey,
+            message: message.trim(),
+            visitorId: req.visitorId ?? null,
+            conversationId: conversationId ?? null,
+            networkIdentityHash: req.networkIdentityHash ?? null,
+            options: {
+              signal: abortController.signal,
+              requestId,
+              clientMessageId: clientMessageId || null,
+            },
+          });
+        } else {
+          const service = await getConversationService();
+          stream = service.streamPublicMessage(
+            req.params.publicKey,
+            message.trim(),
+            req.visitorId ?? null,
+            conversationId ?? null,
+            req.networkIdentityHash ?? null,
+            {
+              signal: abortController.signal,
+              requestId,
+              clientMessageId: clientMessageId || null,
+            },
+          );
+        }
 
         for await (const event of stream) {
           if (
@@ -189,21 +228,50 @@ export const createPublicChatController = ({
           return;
         }
 
-        Logger.error("Public streaming failed", error);
+        Logger.error("Public streaming failed", {
+          message: error?.message,
+          name: error?.name,
+          statusCode: error?.statusCode,
+          errorCode: error?.errorCode,
+          provider: error?.provider,
+          model: error?.model,
+          upstreamStatus: error?.upstreamStatus,
+          isTransient: error?.isTransient,
+          cause: error?.cause?.message || error?.cause,
+          stack: error?.stack,
+        });
 
         let message = "Public agent request failed.";
 
-        if (error instanceof Error) {
+        if (
+          error?.errorCode === "DAILY_LIMIT_REACHED" ||
+          error?.statusCode === 429
+        ) {
+          message = error.message || "Daily message limit reached.";
+        } else if (
+          error?.errorCode === "PUBLIC_AGENT_NOT_FOUND" ||
+          error?.statusCode === 404
+        ) {
+          message = "Agent not found, please contact administration.";
+        } else if (
+          error?.errorCode === "AGENT_NOT_PUBLIC" ||
+          error?.statusCode === 403
+        ) {
+          message = "This agent is not publicly accessible.";
+        } else if (
+          error instanceof ProviderError ||
+          error?.statusCode === 502 ||
+          error?.statusCode === 503 ||
+          error?.statusCode === 504 ||
+          error?.errorCode === "PROVIDER_ERROR" ||
+          (error?.statusCode >= 500 && !error?.isOperational)
+        ) {
+          message =
+            "The AI service is temporarily unavailable. Please try again shortly.";
+        } else if (error instanceof Error && error.message) {
           message = error.message;
         } else if (typeof error === "string") {
           message = error;
-        } else if (error && typeof error === "object") {
-          message =
-            typeof error.message === "string"
-              ? error.message
-              : typeof error.error === "string"
-                ? error.error
-                : "Public agent request failed.";
         }
 
         if (!res.writableEnded) {
@@ -249,7 +317,8 @@ export const createPublicChatController = ({
 
     getPublicActiveConversation: asyncHandler(async (req, res) => {
       const { publicKey } = req.params;
-      const result = await conversationService.getPublicActiveConversation(
+      const service = await getConversationService();
+      const result = await service.getPublicActiveConversation(
         publicKey,
         req.visitorId ?? null,
         req.networkIdentityHash ?? null,
@@ -263,7 +332,8 @@ export const createPublicChatController = ({
 
     getPublicConversationMessages: asyncHandler(async (req, res) => {
       const { publicKey, conversationId } = req.params;
-      const result = await conversationService.getPublicConversationMessages(
+      const service = await getConversationService();
+      const result = await service.getPublicConversationMessages(
         publicKey,
         conversationId,
         req.visitorId ?? null,
@@ -275,4 +345,6 @@ export const createPublicChatController = ({
       });
     }),
   };
+
+  return controller;
 };

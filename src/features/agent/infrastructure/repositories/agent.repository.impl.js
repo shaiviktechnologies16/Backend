@@ -268,6 +268,9 @@ export class AgentRepositoryImpl extends AgentRepository {
       name: agent.name,
       description: agent.description,
       systemPrompt: agent.systemPrompt,
+      aiModelId: agent.aiModelId,
+      provider: agent.provider,
+      model: agent.model,
 
       temperature: agent.temperature,
       maxTokens: agent.maxTokens,
@@ -281,6 +284,10 @@ export class AgentRepositoryImpl extends AgentRepository {
 
       widgetConfig: agent.widgetConfig,
     });
+
+    if (agent.publicKey && this.publicKeyCache) {
+      this.publicKeyCache.delete(agent.publicKey);
+    }
 
     return this.findById(agent.id);
   }

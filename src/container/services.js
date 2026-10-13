@@ -167,6 +167,20 @@ export const organizationModelEntitlementService =
 const organizationModelAccessModule = createOrganizationModelAccessModule({
   dataSource: AppDataSource,
   organizationModelEntitlementService,
+  organizationRepository,
+  aiModelRepository: aiModelModule.aiModelRepository,
+  onModelAccessChanged: (orgId) => {
+    try {
+      if (conversationService?.invalidateModelAccessCache) {
+        conversationService.invalidateModelAccessCache(orgId);
+      }
+      if (agentModule?.agentRepository?.publicKeyCache) {
+        agentModule.agentRepository.publicKeyCache.clear();
+      }
+    } catch (err) {
+      console.error("Cache invalidation error:", err);
+    }
+  },
 });
 
 const organizationFeatureAccessModule = createOrganizationFeatureAccessModule({
@@ -465,6 +479,8 @@ whatsappModule.handleEvolutionWebhookUseCase.messageRepository =
   messageRepository;
 whatsappModule.handleEvolutionWebhookUseCase.conversationService =
   conversationService;
+
+publicChatModule.publicChatController.conversationService = conversationService;
 whatsappModule.handleEvolutionWebhookUseCase.whatsappProvider =
   whatsappModule.evolutionWhatsappProvider;
 whatsappModule.handleEvolutionWebhookUseCase.agentRepository =
