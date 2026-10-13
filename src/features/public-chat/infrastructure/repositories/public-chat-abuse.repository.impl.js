@@ -7,7 +7,13 @@ const RATE_WINDOW_SECONDS = 60;
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
 export class PublicChatAbuseRepositoryImpl extends PublicChatAbuseRepository {
-  async checkAndConsume({ organizationId, ipHash, dailyVisitorLimit }) {
+  async checkAndConsume({
+    organizationId,
+    visitorId = null,
+    ipHash,
+    dailyVisitorLimit,
+    visitorDailyMessages = 0,
+  }) {
     const effectiveDailyLimit =
       dailyVisitorLimit !== null &&
       dailyVisitorLimit !== undefined &&
@@ -56,8 +62,12 @@ export class PublicChatAbuseRepositoryImpl extends PublicChatAbuseRepository {
         Math.ceil((nextMidnightIST.getTime() - now.getTime()) / 1000),
       );
 
+      // IP-based burst rate limiting (e.g. 10 requests / 60 seconds)
       const rateLimitKey = `public-chat:rate:${organizationId}:${ipHash}`;
-      const dailyLimitKey = `public-chat:daily:${organizationId}:${ipHash}:${istDate}`;
+
+      // Visitor-based daily message limit (independent per visitor)
+      const dailyIdentity = visitorId || ipHash;
+      const dailyLimitKey = `public-chat:daily:${organizationId}:${dailyIdentity}:${istDate}`;
 
       const rateCount = await redis.incr(rateLimitKey);
 
@@ -71,15 +81,17 @@ export class PublicChatAbuseRepositoryImpl extends PublicChatAbuseRepository {
         await redis.expire(dailyLimitKey, secondsUntilNextMidnight);
       }
 
+      const currentUsed = Math.max(dailyCount, Number(visitorDailyMessages) || 0);
+
       return {
         rateLimitExceeded: rateCount > RATE_LIMIT,
         dailyLimitExceeded:
-          effectiveDailyLimit !== null && dailyCount > effectiveDailyLimit,
+          effectiveDailyLimit !== null && currentUsed > effectiveDailyLimit,
         rateLimitRemaining: Math.max(0, RATE_LIMIT - rateCount),
         dailyRemaining:
           effectiveDailyLimit === null
             ? null
-            : Math.max(0, effectiveDailyLimit - dailyCount),
+            : Math.max(0, effectiveDailyLimit - currentUsed),
       };
     } catch (error) {
       console.warn(

@@ -7,6 +7,7 @@ import { AppError } from "../../../common/errors/AppError.js";
 import {
   isSimpleConversationalMessage,
   isHumanHandoverIntent,
+  isReturnToAiIntent,
 } from "../service/message-intent.service.js";
 import {
   sanitizeUserPromptInput,
@@ -72,21 +73,25 @@ export class ConversationService {
     isSimpleMessage,
     hasRagSources,
   }) {
-    let budget = 192;
-    if (isSimpleMessage) {
-      budget = 96;
-    } else if (hasRagSources) {
-      budget = 256;
-    }
     if (
       agentMaxTokens &&
       typeof agentMaxTokens === "number" &&
       agentMaxTokens > 0
     ) {
-      return Math.min(agentMaxTokens, budget);
+      return Math.max(agentMaxTokens, isSimpleMessage ? 384 : 768);
     }
-    return budget;
+
+    if (isSimpleMessage) {
+      return 384;
+    }
+
+    if (hasRagSources) {
+      return 768;
+    }
+
+    return 512;
   }
+
 
   isSameCalendarDay(date1, date2, timeZone = "Asia/Kolkata") {
     if (!date1 || !date2) return false;
@@ -424,30 +429,45 @@ export class ConversationService {
     const orgId = agent?.project?.organizationId;
     if (!orgId) return;
 
+    if (!this.modelAccessCache) {
+      this.modelAccessCache = new Map();
+    }
+    const cacheKey = `${orgId}:${agent?.aiModelId || "no-model"}`;
+    const cached = this.modelAccessCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < 60_000) {
+      return;
+    }
+
     if (this.budgetCapGuardService) {
       await this.budgetCapGuardService.checkBudgetCap(orgId);
     }
 
-    if (this.organizationModelEntitlementService) {
-      try {
-        await this.organizationModelEntitlementService.syncOrganizationModelEntitlements(
-          {
-            organizationId: orgId,
-          },
-        );
-      } catch (err) {
-        console.error(
-          "Failed to auto-sync entitlements during model validation:",
-          err,
-        );
-      }
-    }
-
     if (this.organizationModelAccessRepository && agent?.aiModelId) {
-      const access = await this.organizationModelAccessRepository.findOne(
+      let access = await this.organizationModelAccessRepository.findOne(
         orgId,
         agent.aiModelId,
       );
+
+      // Only attempt entitlement sync as a fallback if access is not found
+      if (!access && this.organizationModelEntitlementService) {
+        try {
+          await this.organizationModelEntitlementService.syncOrganizationModelEntitlements(
+            {
+              organizationId: orgId,
+            },
+          );
+          access = await this.organizationModelAccessRepository.findOne(
+            orgId,
+            agent.aiModelId,
+          );
+        } catch (err) {
+          console.error(
+            "Failed to auto-sync entitlements during model validation:",
+            err,
+          );
+        }
+      }
+
       if (!access || access.aiModel?.status !== "ACTIVE") {
         throw new AppError(
           "AI model is not authorized for your organization's subscription plan.",
@@ -456,6 +476,8 @@ export class ConversationService {
         );
       }
     }
+
+    this.modelAccessCache.set(cacheKey, { timestamp: Date.now() });
   }
 
   async getAgent(userId, agentId = null, projectId = null) {
@@ -559,7 +581,13 @@ export class ConversationService {
     return await this.conversationRepository.findAllByProject(projectId);
   }
 
-  async buildRagSystemMessage({ context, projectId, query, isPublic = false }) {
+  async buildRagSystemMessage({
+    context,
+    projectId,
+    query,
+    isPublic = false,
+    preloadedKnowledgeResults = null,
+  }) {
     const systemMessage = this.aiContextService.buildSystemMessage(context);
 
     if (!projectId) {
@@ -570,26 +598,26 @@ export class ConversationService {
       };
     }
 
-    let knowledgeResults = [];
-    try {
-      knowledgeResults = await this.knowledgeSearchService.search({
-        projectId,
-        query,
-      });
-    } catch (ragErr) {
-      console.warn(
-        "[RAG_SEARCH_FALLBACK] Knowledge search failed, continuing with agent prompt instructions:",
-        ragErr.message,
-      );
+    let knowledgeResults = preloadedKnowledgeResults;
+    if (!knowledgeResults) {
+      try {
+        knowledgeResults = await this.knowledgeSearchService.search({
+          projectId,
+          query,
+        });
+      } catch (ragErr) {
+        console.warn(
+          "[RAG_SEARCH_FALLBACK] Knowledge search failed, continuing with agent prompt instructions:",
+          ragErr.message,
+        );
+        knowledgeResults = [];
+      }
     }
 
-    const ragSystemPrompt = await this.getPlatformConfigUseCase.getValue(
-      "AI_RAG_SYSTEM_PROMPT",
-    );
-
-    const noContextMessage = await this.getPlatformConfigUseCase.getValue(
-      "AI_RAG_NO_CONTEXT_MESSAGE",
-    );
+    const [ragSystemPrompt, noContextMessage] = await Promise.all([
+      this.getPlatformConfigUseCase.getValue("AI_RAG_SYSTEM_PROMPT"),
+      this.getPlatformConfigUseCase.getValue("AI_RAG_NO_CONTEXT_MESSAGE"),
+    ]);
 
     const knowledgeContext = knowledgeResults
       .map((result, index) => {
@@ -1562,6 +1590,11 @@ export class ConversationService {
       );
     }
 
+    if (!reply || reply.trim().length === 0) {
+      reply =
+        "క్షమించండి, ప్రస్తుతం స్పందించలేకపోయాను. దయచేసి మీ సందేశాన్ని మళ్లీ పంపండి. (I apologize, I could not generate a response right now. Please try sending your message again.)";
+    }
+
     await executeTransaction(async (queryRunner) => {
       await this.safeUpdateConversation(conversation, queryRunner.manager);
 
@@ -1573,6 +1606,24 @@ export class ConversationService {
 
       await this.messageRepository.createForStreaming(
         assistantMessage,
+        queryRunner.manager,
+      );
+
+      await this.usageRepository.create(
+        new Usage({
+          agentId: agent.id,
+          conversationId: conversation.id,
+          visitorId: conversation.visitorId,
+          organizationId: agent.project?.organizationId ?? null,
+          networkIdentityHash,
+          modelName: agent.aiModel?.providerModelId ?? agent.model ?? null,
+          costUsd: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          totalTokens: 0,
+          responseTimeMs: 0,
+          status: "SUCCESS",
+        }),
         queryRunner.manager,
       );
     });
@@ -1690,29 +1741,26 @@ export class ConversationService {
       });
     }
 
-    await this.validateAgentModelAccess(agent);
+    /*
+     * Preflight: Model access validation & Plan usage check in parallel
+     */
+    const preflightStartedAt = Date.now();
+
+    const [, resolvedPlanUsage] = await Promise.all([
+      this.validateAgentModelAccess(agent),
+      this.checkPlanUsageUseCase.execute({
+        organizationId: agent.project.organizationId,
+        visitorId,
+        networkIdentityHash,
+      }),
+    ]);
+    planUsage = resolvedPlanUsage;
 
     const agentResolutionMs = Date.now() - agentStartedAt;
+    const planUsageMs = Date.now() - preflightStartedAt;
 
     logStage("agent_resolution", agentStartedAt);
-
-    /*
-     * Plan validation
-     *
-     * Deliberately outside the conversation transaction.
-     */
-
-    const planStartedAt = Date.now();
-
-    planUsage = await this.checkPlanUsageUseCase.execute({
-      organizationId: agent.project.organizationId,
-      visitorId,
-      networkIdentityHash,
-    });
-
-    const planUsageMs = Date.now() - planStartedAt;
-
-    logStage("plan_usage", planStartedAt);
+    logStage("plan_usage", preflightStartedAt);
 
     /*
      * Conversation setup
@@ -1838,34 +1886,54 @@ export class ConversationService {
         });
 
         try {
-          const userMessage = new Message({
-            conversationId: conversation.id,
-            role: MessageRole.USER,
-            content,
-          });
+          const clientMessageId = options?.clientMessageId || null;
+          let userMessage = null;
 
-          await this.messageRepository.create(userMessage, manager);
-          await this.safeUpdateConversation(conversation, manager);
+          if (clientMessageId) {
+            const existingMessage = await this.messageRepository.findById
+              ? await this.messageRepository.findById(clientMessageId, manager)
+              : null;
+            if (existingMessage) {
+              userMessage = existingMessage;
+              console.log("[PublicChatDebug] USER_MESSAGE_IDEMPOTENT_REUSE", {
+                requestId,
+                messageId: userMessage.id,
+                conversationId: conversation.id,
+              });
+            }
+          }
 
-          console.log("[PublicChatDebug] USER_MESSAGE_CREATE_SUCCESS", {
-            requestId,
-            messageId: userMessage.id,
-            conversationId: conversation.id,
-          });
+          if (!userMessage) {
+            userMessage = new Message({
+              id: clientMessageId || crypto.randomUUID(),
+              conversationId: conversation.id,
+              role: MessageRole.USER,
+              content,
+            });
 
-          workspaceRealtimeEmitter.emit("conversation.message.created", {
-            conversationId: conversation.id,
-            projectId: conversation.projectId,
-            message: {
-              id: userMessage.id,
-              role: userMessage.role,
-              content: userMessage.content,
-              createdAt: userMessage.createdAt || new Date().toISOString(),
-            },
-            updatedAt: conversation.updatedAt
-              ? conversation.updatedAt.toISOString()
-              : new Date().toISOString(),
-          });
+            await this.messageRepository.create(userMessage, manager);
+            await this.safeUpdateConversation(conversation, manager);
+
+            console.log("[PublicChatDebug] USER_MESSAGE_CREATE_SUCCESS", {
+              requestId,
+              messageId: userMessage.id,
+              conversationId: conversation.id,
+            });
+
+            workspaceRealtimeEmitter.emit("conversation.message.created", {
+              conversationId: conversation.id,
+              projectId: conversation.projectId,
+              message: {
+                id: userMessage.id,
+                role: userMessage.role,
+                content: userMessage.content,
+                createdAt: userMessage.createdAt || new Date().toISOString(),
+              },
+              updatedAt: conversation.updatedAt
+                ? conversation.updatedAt.toISOString()
+                : new Date().toISOString(),
+            });
+          }
         } catch (msgErr) {
           console.error("[PublicChatDebug] USER_MESSAGE_CREATE_FAILED", {
             requestId,
@@ -1932,12 +2000,31 @@ export class ConversationService {
     }
 
     if (conversation.isHandover) {
-      console.log("[PublicChatDebug] CONVERSATION_IS_IN_HANDOVER_MODE", {
-        requestId,
-        conversationId: conversation.id,
-      });
-      yield { type: "done" };
-      return;
+      if (isReturnToAiIntent(content)) {
+        await this.toggleHandoverMode({
+          conversationId: conversation.id,
+          isHandover: false,
+          lastMessage: content,
+        });
+        conversation.isHandover = false;
+        console.log("[PublicChatDebug] HANDOVER_RESET_TO_AI", {
+          requestId,
+          conversationId: conversation.id,
+        });
+      } else {
+        console.log("[PublicChatDebug] CONVERSATION_IS_IN_HANDOVER_MODE", {
+          requestId,
+          conversationId: conversation.id,
+        });
+        const handoverNotice =
+          "Your conversation is currently connected with support. A representative will respond to your messages shortly. (To switch back to the AI assistant, say 'back to AI' or click 'Return to AI').";
+        yield {
+          type: "token",
+          content: handoverNotice,
+        };
+        yield { type: "done" };
+        return;
+      }
     }
 
     const conversationSetupMs = Date.now() - conversationSetupStartedAt;
@@ -1986,30 +2073,50 @@ export class ConversationService {
     const providerResolutionMs = Date.now() - providerStartedAt;
 
     /*
-     * History
+     * Context, History, RAG & Tools (Concurrent Fetching)
      */
+    const prepareStartedAt = Date.now();
+    const targetProjectId = conversation.projectId || agent?.projectId;
 
-    const historyStartedAt = Date.now();
-
-    console.log("[PublicChatDebug] HISTORY_FETCH_START", {
+    console.log("[PublicChatDebug] PROMPT_DATA_FETCH_START", {
       requestId,
       conversationId: conversation.id,
-      maxContextMessages: aiProvider.maxContextMessages,
+      isSimpleMessage,
     });
 
-    const history = await this.messageRepository.findRecentByConversationId(
-      conversation.id,
-      aiProvider.maxContextMessages,
-    );
+    const [history, context, preloadedKnowledgeResults, rawTools] =
+      await Promise.all([
+        this.messageRepository.findRecentByConversationId(
+          conversation.id,
+          aiProvider.maxContextMessages,
+        ),
+        this.aiContextService.buildPublic({
+          agent,
+          project: agent.project,
+          conversation,
+        }),
+        !isSimpleMessage && targetProjectId && this.knowledgeSearchService
+          ? this.knowledgeSearchService
+              .search({
+                projectId: targetProjectId,
+                query: content,
+              })
+              .catch((ragErr) => {
+                console.warn(
+                  "[RAG_SEARCH_FALLBACK] Knowledge search failed, continuing with agent prompt instructions:",
+                  ragErr.message,
+                );
+                return [];
+              })
+          : Promise.resolve([]),
+        !isSimpleMessage && this.agentToolRepository
+          ? this.agentToolRepository.findByAgentId(agent.id)
+          : Promise.resolve([]),
+      ]);
 
-    console.log("[PublicChatDebug] HISTORY_FETCH_SUCCESS", {
-      requestId,
-      historyCount: history ? history.length : 0,
-    });
-
-    const historyMs = Date.now() - historyStartedAt;
-
-    logStage("history", historyStartedAt);
+    const historyMs = Date.now() - prepareStartedAt;
+    const contextMs = historyMs;
+    logStage("history_and_context_parallel", prepareStartedAt);
 
     const messages = history.map((message) => ({
       role: message.role,
@@ -2017,31 +2124,9 @@ export class ConversationService {
     }));
 
     /*
-     * AI context
+     * RAG / tools prompt assembly
      */
-
-    const contextStartedAt = Date.now();
-
-    console.log("[PublicChatDebug] CONTEXT_BUILD_START", { requestId });
-
-    const context = await this.aiContextService.buildPublic({
-      agent,
-      project: agent.project,
-      conversation,
-    });
-
-    console.log("[PublicChatDebug] CONTEXT_BUILD_SUCCESS", { requestId });
-
-    const contextMs = Date.now() - contextStartedAt;
-
-    logStage("ai_context", contextStartedAt);
-
-    /*
-     * RAG / tools
-     */
-
     const promptBuildStartedAt = Date.now();
-
     let ragSources = [];
     let ragMs = 0;
     let tools = [];
@@ -2058,33 +2143,29 @@ export class ConversationService {
 
       messages.unshift(systemMessage);
     } else {
-      const ragStartedAt = Date.now();
+      const ragBuildStartedAt = Date.now();
 
       const ragResult = await this.buildRagSystemMessage({
         context,
-        projectId: conversation.projectId || agent?.projectId,
+        projectId: targetProjectId,
         query: content,
         isPublic: true,
+        preloadedKnowledgeResults,
       });
 
-      ragMs = Date.now() - ragStartedAt;
-
-      logStage("rag", ragStartedAt);
+      ragMs = Date.now() - ragBuildStartedAt;
+      logStage("rag", ragBuildStartedAt);
 
       if (ragResult.systemMessages && Array.isArray(ragResult.systemMessages)) {
-        messages.unshift(...ragResult.systemMessages.slice().reverse());
+        messages.unshift(...ragResult.systemMessages);
       } else {
         messages.unshift(ragResult.message);
       }
       ragSources = ragResult.sources;
 
-      const toolsStartedAt = Date.now();
-
-      tools = await this.agentToolRepository.findByAgentId(agent.id);
-
-      tools = this.agentToolSchemaService.toOllamaTools(tools);
-
-      logStage("agent_tools", toolsStartedAt);
+      if (rawTools && Array.isArray(rawTools) && rawTools.length > 0) {
+        tools = this.agentToolSchemaService.toOllamaTools(rawTools);
+      }
     }
 
     const promptBuildMs = Date.now() - promptBuildStartedAt;
@@ -2336,6 +2417,16 @@ export class ConversationService {
         400,
         "TOOL_ITERATION_LIMIT",
       );
+    }
+
+    if (!reply || reply.trim().length === 0) {
+      const fallbackText =
+        "క్షమించండి, ప్రస్తుతం స్పందించలేకపోయాను. దయచేసి మీ సందేశాన్ని మళ్లీ పంపండి. (I apologize, I could not generate a response right now. Please try sending your message again.)";
+      reply = fallbackText;
+      yield {
+        type: "token",
+        content: fallbackText,
+      };
     }
 
     /*

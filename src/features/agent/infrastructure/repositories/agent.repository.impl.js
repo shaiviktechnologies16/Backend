@@ -8,6 +8,8 @@ export class AgentRepositoryImpl extends AgentRepository {
     super();
 
     this.repository = dataSource.getRepository(AgentOrmEntity);
+    this.publicKeyCache = new Map();
+    this.publicKeyCacheTtlMs = 60_000;
   }
   toDomain(entity) {
     if (!entity) return null;
@@ -219,6 +221,13 @@ export class AgentRepositoryImpl extends AgentRepository {
   }
 
   async findByPublicKey(publicKey) {
+    if (!publicKey) return null;
+
+    const cached = this.publicKeyCache.get(publicKey);
+    if (cached && Date.now() - cached.timestamp < this.publicKeyCacheTtlMs) {
+      return cached.agent;
+    }
+
     const entity = await this.repository.findOne({
       where: {
         publicKey,
@@ -230,10 +239,19 @@ export class AgentRepositoryImpl extends AgentRepository {
       },
     });
 
-    return this.toDomain(entity);
+    const agent = this.toDomain(entity);
+    if (agent) {
+      this.publicKeyCache.set(publicKey, {
+        agent,
+        timestamp: Date.now(),
+      });
+    }
+
+    return agent;
   }
 
   async update(agent) {
+    this.publicKeyCache.clear();
     if (agent.isDefault) {
       await this.repository.update(
         {

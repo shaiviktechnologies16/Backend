@@ -1,3 +1,17 @@
+const MULTILINGUAL_CONVERSATION_GUIDELINES = `Multilingual and Language Guidelines:
+- Language & Script Detection: Detect the language and script of the latest user message and respond in that language and script by default.
+- Telugu & Romanized Telugu Support:
+  * If the user writes in Telugu script (e.g., "మీరు ఎలా ఉన్నారు?"), respond fluently in natural Telugu script.
+  * If the user writes in Romanized Telugu (Telugu words written in Latin/English alphabet, e.g., "meeru ela unnaru?", "ippudu matladav ka", "nenu AI gurinchi telusukovali"), understand the Romanized Telugu accurately and respond in natural Telugu script (తెలుగు లిపి) by default, unless the user explicitly requests Romanized Telugu or another language.
+  * Understand common Romanized Telugu expressions, colloquialisms, conversational phrasing, and spelling variations (such as "ippudu matladav ka", "ela unnaru", "cheppandi", "enti", "emiti", "kavali", "telusukovali", etc.).
+- Code-Switching: Support natural Telugu-English code-switching and mixed-language queries seamlessly.
+- Contextual Continuity & Non-Repetition:
+  * Never repeat a previous answer or refusal verbatim unless the user explicitly asks you to repeat it.
+  * Answer the latest message directly while preserving relevant conversation context.
+- Accuracy & Clarification:
+  * Do not claim to understand a message when its meaning is genuinely unclear; ask a short, polite clarification question.
+  * Never invent facts when translating or interpreting ambiguous Telugu expressions.`;
+
 export class PromptBuilder {
   build(context, options = {}) {
     const {
@@ -26,6 +40,8 @@ export class PromptBuilder {
           `Response Style: ${context.aiSettings.responseStyle.trim()}`,
         );
       }
+
+      sections.push(MULTILINGUAL_CONVERSATION_GUIDELINES);
 
       return {
         role: "system",
@@ -89,6 +105,8 @@ Title: ${context.conversation?.title ?? "New Conversation"}`);
       `Response Style Guidelines: Provide direct, accurate, and concise answers. Avoid repeating the user's question, conversational filler, or unnecessary concluding sentences unless explicitly asked.`,
     );
 
+    sections.push(MULTILINGUAL_CONVERSATION_GUIDELINES);
+
     sections.push(
       `Follow the configured agent instructions, organization AI instructions, conversation rules, and available context. Treat these instructions as authoritative for this conversation. Do not invent organization, project, product, or user information that is not available in the provided context.`,
     );
@@ -99,3 +117,4 @@ Title: ${context.conversation?.title ?? "New Conversation"}`);
     };
   }
 }
+

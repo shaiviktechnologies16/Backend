@@ -68,7 +68,7 @@ export const createPublicChatController = ({
         .substring(0, 12);
       req.requestId = requestId;
 
-      const { message, conversationId } = req.body;
+      const { message, conversationId, clientMessageId } = req.body;
 
       if (!message || typeof message !== "string") {
         throw new ValidationError("Message is required.");
@@ -106,7 +106,11 @@ export const createPublicChatController = ({
           req.visitorId ?? null,
           conversationId ?? null,
           req.networkIdentityHash ?? null,
-          { signal: abortController.signal, requestId },
+          {
+            signal: abortController.signal,
+            requestId,
+            clientMessageId: clientMessageId || null,
+          },
         );
 
         for await (const event of stream) {
@@ -203,6 +207,13 @@ export const createPublicChatController = ({
         }
 
         if (!res.writableEnded) {
+          if (error?.usage) {
+            writeEvent(res, "usage_limit", {
+              usage: error.usage,
+            });
+            if (res.flush) res.flush();
+          }
+
           writeEvent(res, "error", {
             message,
           });

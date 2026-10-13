@@ -53,6 +53,17 @@ export class PostgresMessageRepository extends MessageRepository {
     return this.toDomain(saved);
   }
 
+  async findById(id, manager = null) {
+    const repository = this.getRepository(manager);
+    const entity = await repository.findOne({
+      where: { id },
+      relations: {
+        conversation: true,
+      },
+    });
+    return this.toDomain(entity);
+  }
+
   async findByConversationId(conversationId, manager = null) {
     const repository = this.getRepository(manager);
 

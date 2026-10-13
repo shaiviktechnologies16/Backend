@@ -153,11 +153,25 @@ export class CheckPlanUsageUseCase {
       limits.messagesPerVisitorPerDay > 0 &&
       dailyVisitorMessages >= limits.messagesPerVisitorPerDay
     ) {
-      throw new AppError(
+      const error = new AppError(
         "You've reached your daily chat limit. Please come back tomorrow to continue chatting.",
         429,
         "DAILY_VISITOR_MESSAGE_LIMIT_EXCEEDED",
       );
+      error.isUsageLimit = true;
+      error.usage = {
+        organization: {
+          used: dailyUsage.requests,
+          limit: limits.requestsPerDay,
+          remaining: requestsRemaining,
+        },
+        visitor: {
+          used: dailyVisitorMessages,
+          limit: limits.messagesPerVisitorPerDay,
+          remaining: 0,
+        },
+      };
+      throw error;
     }
 
     if (
@@ -166,37 +180,72 @@ export class CheckPlanUsageUseCase {
       limits.messagesPerVisitorPerMonth > 0 &&
       monthlyVisitorMessages >= limits.messagesPerVisitorPerMonth
     ) {
-      throw new AppError(
+      const error = new AppError(
         "You've reached your monthly chat limit. Please come back next month to continue chatting.",
         429,
         "MONTHLY_VISITOR_MESSAGE_LIMIT_EXCEEDED",
       );
+      error.isUsageLimit = true;
+      error.usage = {
+        organization: {
+          used: monthlyUsage.requests,
+          limit: limits.requestsPerMonth,
+          remaining: monthlyRequestsRemaining,
+        },
+        visitor: {
+          used: monthlyVisitorMessages,
+          limit: limits.messagesPerVisitorPerMonth,
+          remaining: 0,
+        },
+      };
+      throw error;
     }
 
     /*
      * Request limits
      */
 
+    // Organization-level daily request quota
     if (
       limits.requestsPerDay !== null &&
+      (!visitorId || limits.requestsPerDay > limits.messagesPerVisitorPerDay) &&
       dailyUsage.requests >= limits.requestsPerDay
     ) {
-      throw new AppError(
-        "You've reached today's chat limit. Please come back tomorrow to continue chatting.",
+      const error = new AppError(
+        "This chatbot has reached its daily organization capacity. Please try again tomorrow or contact the website owner.",
         429,
-        "DAILY_REQUEST_LIMIT_EXCEEDED",
+        "ORGANIZATION_DAILY_LIMIT_EXCEEDED",
       );
+      error.isUsageLimit = true;
+      error.usage = {
+        organization: {
+          used: dailyUsage.requests,
+          limit: limits.requestsPerDay,
+          remaining: 0,
+        },
+        visitor: {
+          used: dailyVisitorMessages,
+          limit: limits.messagesPerVisitorPerDay,
+          remaining:
+            limits.messagesPerVisitorPerDay !== null
+              ? Math.max(0, limits.messagesPerVisitorPerDay - dailyVisitorMessages)
+              : null,
+        },
+      };
+      throw error;
     }
 
     if (
       limits.requestsPerMonth !== null &&
       monthlyUsage.requests >= limits.requestsPerMonth
     ) {
-      throw new AppError(
-        `Monthly request limit of ${limits.requestsPerMonth} has been reached.`,
+      const error = new AppError(
+        `Monthly request limit of ${limits.requestsPerMonth} has been reached for this organization.`,
         429,
         "MONTHLY_REQUEST_LIMIT_EXCEEDED",
       );
+      error.isUsageLimit = true;
+      throw error;
     }
 
     /*

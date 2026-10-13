@@ -202,17 +202,17 @@ export class PlanRepositoryImpl extends PlanRepository {
           )::int AS monthly_conversations,
 
           COUNT(
-            DISTINCT COALESCE(u.network_identity_hash, u.visitor_id)
+            DISTINCT COALESCE(u.visitor_id, u.network_identity_hash)
           ) FILTER (
             WHERE u.created_at >= $2
-              AND (u.network_identity_hash IS NOT NULL OR u.visitor_id IS NOT NULL)
+              AND (u.visitor_id IS NOT NULL OR u.network_identity_hash IS NOT NULL)
           )::int AS daily_unique_visitors,
 
           COUNT(
-            DISTINCT COALESCE(u.network_identity_hash, u.visitor_id)
+            DISTINCT COALESCE(u.visitor_id, u.network_identity_hash)
           ) FILTER (
             WHERE u.created_at >= $3
-              AND (u.network_identity_hash IS NOT NULL OR u.visitor_id IS NOT NULL)
+              AND (u.visitor_id IS NOT NULL OR u.network_identity_hash IS NOT NULL)
           )::int AS monthly_unique_visitors,
 
           COUNT(
@@ -220,8 +220,8 @@ export class PlanRepositoryImpl extends PlanRepository {
           ) FILTER (
             WHERE u.created_at >= $2
               AND (
-                ($5::text IS NOT NULL AND u.network_identity_hash = $5)
-                OR ($5::text IS NULL AND u.visitor_id = $4)
+                ($4::text IS NOT NULL AND u.visitor_id = $4)
+                OR ($4::text IS NULL AND $5::text IS NOT NULL AND u.network_identity_hash = $5)
               )
           )::int AS daily_visitor_messages,
 
@@ -230,8 +230,8 @@ export class PlanRepositoryImpl extends PlanRepository {
           ) FILTER (
             WHERE u.created_at >= $3
               AND (
-                ($5::text IS NOT NULL AND u.network_identity_hash = $5)
-                OR ($5::text IS NULL AND u.visitor_id = $4)
+                ($4::text IS NOT NULL AND u.visitor_id = $4)
+                OR ($4::text IS NULL AND $5::text IS NOT NULL AND u.network_identity_hash = $5)
               )
           )::int AS monthly_visitor_messages
 

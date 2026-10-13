@@ -53,11 +53,25 @@ export class CheckPublicChatAbuseUseCase {
     }
 
     if (result.dailyLimitExceeded) {
-      throw new AppError(
-        "Daily chat limit has been reached. Please come back tomorrow to continue chatting.",
+      const error = new AppError(
+        "You've reached your daily chat limit. Please come back tomorrow to continue chatting.",
         429,
-        "PUBLIC_CHAT_DAILY_LIMIT_EXCEEDED",
+        "DAILY_VISITOR_MESSAGE_LIMIT_EXCEEDED",
       );
+      error.isUsageLimit = true;
+      error.usage = {
+        organization: {
+          used: planUsage.usage.daily.requests,
+          limit: planUsage.limits.requestsPerDay,
+          remaining: planUsage.usage.daily.requestsRemaining,
+        },
+        visitor: {
+          used: dailyVisitorLimit,
+          limit: dailyVisitorLimit,
+          remaining: 0,
+        },
+      };
+      throw error;
     }
 
     return {
