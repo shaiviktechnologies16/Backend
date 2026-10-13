@@ -1365,15 +1365,14 @@ export class ConversationService {
           candidate &&
           !candidate.isCompleted &&
           candidate.agentId === agent.id &&
-          candidate.visitorId === visitorId &&
-          this.isSameCalendarDay(candidate.createdAt, new Date(), timeZone)
+          candidate.visitorId === visitorId
         ) {
           conversation = candidate;
         }
       }
 
       if (!conversation) {
-        const existingTodayConv =
+        const existingActiveConv =
           await this.conversationRepository.findLatestByVisitorAndAgent(
             visitorId,
             agent.id,
@@ -1381,15 +1380,10 @@ export class ConversationService {
           );
 
         if (
-          existingTodayConv &&
-          !existingTodayConv.isCompleted &&
-          this.isSameCalendarDay(
-            existingTodayConv.createdAt,
-            new Date(),
-            timeZone,
-          )
+          existingActiveConv &&
+          !existingActiveConv.isCompleted
         ) {
-          conversation = existingTodayConv;
+          conversation = existingActiveConv;
         } else {
           conversation = new Conversation({
             userId: null,
@@ -1831,7 +1825,7 @@ export class ConversationService {
         }
 
         if (!conversation) {
-          const existingTodayConv =
+          const existingActiveConv =
             await this.conversationRepository.findLatestByVisitorAndAgent(
               visitorId,
               agent.id,
@@ -1839,15 +1833,10 @@ export class ConversationService {
             );
 
           if (
-            existingTodayConv &&
-            !existingTodayConv.isCompleted &&
-            this.isSameCalendarDay(
-              existingTodayConv.createdAt,
-              new Date(),
-              timeZone,
-            )
+            existingActiveConv &&
+            !existingActiveConv.isCompleted
           ) {
-            conversation = existingTodayConv;
+            conversation = existingActiveConv;
             console.log("[PublicChatDebug] CONVERSATION_FOUND", {
               requestId,
               conversationId: conversation.id,
@@ -2709,6 +2698,7 @@ export class ConversationService {
     publicKey,
     visitorId,
     networkIdentityHash = null,
+    conversationId = null,
   ) {
     if (!publicKey) {
       throw new AppError("Public key is required.", 400, "PUBLIC_KEY_REQUIRED");
@@ -2758,7 +2748,7 @@ export class ConversationService {
       }
     }
 
-    if (!visitorId) {
+    if (!visitorId && !conversationId) {
       return {
         conversation: null,
         messages: [],
@@ -2766,20 +2756,40 @@ export class ConversationService {
       };
     }
 
-    const timeZone = await this.getCompanyTimezone(
-      agent.project?.organizationId,
-    );
+    let activeConv = null;
 
-    const latestConv =
-      await this.conversationRepository.findLatestByVisitorAndAgent(
-        visitorId,
-        agent.id,
-      );
+    if (conversationId) {
+      try {
+        const candidate =
+          await this.conversationRepository.findById(conversationId);
+        if (
+          candidate &&
+          !candidate.isCompleted &&
+          candidate.agentId === agent.id &&
+          (!visitorId ||
+            candidate.visitorId === visitorId ||
+            candidate.visitorId === null)
+        ) {
+          activeConv = candidate;
+        }
+      } catch {
+        // Fallback to visitor lookup
+      }
+    }
 
-    if (
-      !latestConv ||
-      !this.isSameCalendarDay(latestConv.createdAt, new Date(), timeZone)
-    ) {
+    if (!activeConv && visitorId) {
+      const latestConv =
+        await this.conversationRepository.findLatestByVisitorAndAgent(
+          visitorId,
+          agent.id,
+        );
+
+      if (latestConv && !latestConv.isCompleted) {
+        activeConv = latestConv;
+      }
+    }
+
+    if (!activeConv) {
       return {
         conversation: null,
         messages: [],
@@ -2788,16 +2798,16 @@ export class ConversationService {
     }
 
     const messages = await this.messageRepository.findByConversationId(
-      latestConv.id,
+      activeConv.id,
     );
 
     return {
       conversation: {
-        id: latestConv.id,
-        isHandover: Boolean(latestConv.isHandover),
-        isCompleted: Boolean(latestConv.isCompleted),
-        isAgentTyping: latestConv.isHandover
-          ? this.isAgentTyping(latestConv.id)
+        id: activeConv.id,
+        isHandover: Boolean(activeConv.isHandover),
+        isCompleted: Boolean(activeConv.isCompleted),
+        isAgentTyping: activeConv.isHandover
+          ? this.isAgentTyping(activeConv.id)
           : false,
       },
       messages: messages.map((m) => ({

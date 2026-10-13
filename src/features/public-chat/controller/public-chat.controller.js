@@ -317,11 +317,14 @@ export const createPublicChatController = ({
 
     getPublicActiveConversation: asyncHandler(async (req, res) => {
       const { publicKey } = req.params;
+      const conversationId =
+        req.query.conversationId || req.headers["x-conversation-id"] || null;
       const service = await getConversationService();
       const result = await service.getPublicActiveConversation(
         publicKey,
         req.visitorId ?? null,
         req.networkIdentityHash ?? null,
+        conversationId,
       );
 
       res.status(200).json({

@@ -164,12 +164,13 @@ const todayActive = await activeConvService.getPublicActiveConversation(
 assert.equal(todayActive.conversation?.id, "conv-today");
 assert.equal(todayActive.messages.length, 2);
 
-// Case B: Yesterday's conversation exists -> returned null (fresh start for new day)
+// Case B: Active conversation from previous day -> preserved and restored
 mockConvRepoWithHistory.latestConv = {
   id: "conv-yesterday",
   agentId: "agent-123",
   visitorId: "vis-123",
   isHandover: false,
+  isCompleted: false,
   createdAt: yesterday,
 };
 
@@ -177,8 +178,25 @@ const yesterdayActive = await activeConvService.getPublicActiveConversation(
   "pub-123",
   "vis-123",
 );
-assert.equal(yesterdayActive.conversation, null);
-assert.equal(yesterdayActive.messages.length, 0);
+assert.equal(yesterdayActive.conversation?.id, "conv-yesterday");
+assert.equal(yesterdayActive.messages.length, 2);
+
+// Case C: Completed conversation -> returned null (fresh start for completed chat)
+mockConvRepoWithHistory.latestConv = {
+  id: "conv-completed",
+  agentId: "agent-123",
+  visitorId: "vis-123",
+  isHandover: false,
+  isCompleted: true,
+  createdAt: yesterday,
+};
+
+const completedActive = await activeConvService.getPublicActiveConversation(
+  "pub-123",
+  "vis-123",
+);
+assert.equal(completedActive.conversation, null);
+assert.equal(completedActive.messages.length, 0);
 
 // Test 5: streamPublicMessage during active handover generates NO repeated assistant notices
 let assistantNoticeCount = 0;
