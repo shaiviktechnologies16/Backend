@@ -75,6 +75,10 @@ export const AppDataSource = new DataSource({
   ssl: databaseSsl,
   synchronize: false,
   logging: true,
+  extra: {
+    max: Number(process.env.DB_POOL_MAX || 25),
+    connectionTimeoutMillis: 10000,
+  },
 
   entities: [
     UserOrm,

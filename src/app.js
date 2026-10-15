@@ -112,7 +112,8 @@ const entitlementMiddleware = createEntitlementMiddleware(
   planModule.entitlementService,
 );
 
-app.use(configureCorsPolicy());
+const corsMiddleware = configureCorsPolicy();
+app.use(corsMiddleware);
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" },

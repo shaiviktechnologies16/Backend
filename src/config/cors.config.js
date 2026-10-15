@@ -10,6 +10,8 @@ export const configureCorsPolicy = () => {
   const defaultAllowedOrigins = [
     "http://localhost:3000",
     "http://localhost:3001",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
     "https://admin.shaiviktechnologies.in",
     "https://shaiviktechnologies.in",
     "https://www.shaiviktechnologies.in",
@@ -23,14 +25,14 @@ export const configureCorsPolicy = () => {
     const incomingRequestOrigin = req.header("Origin");
 
     // Public chat and public embed endpoints must allow any origin (e.g. client websites embedding the widget)
-    const requestPath = req.path || req.originalUrl || "";
+    const requestPath = req.path || req.originalUrl || req.url || "";
     const isPublicEndpoint =
       requestPath.startsWith("/api/public") ||
       requestPath.startsWith("/api/v1/public");
 
     if (isPublicEndpoint) {
       return callback(null, {
-        origin: incomingRequestOrigin ? true : "*",
+        origin: incomingRequestOrigin || true,
         credentials: true,
         exposedHeaders: ["x-visitor-id", "x-conversation-id"],
         methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -41,6 +43,10 @@ export const configureCorsPolicy = () => {
           "x-visitor-id",
           "x-conversation-id",
           "x-client-message-id",
+          "x-organization-id",
+          "x-project-id",
+          "Cache-Control",
+          "Pragma",
         ],
       });
     }
@@ -56,13 +62,14 @@ export const configureCorsPolicy = () => {
 
     // Allow request if origin is in allowed origins list or in local environment
     if (
-      fullAllowedOrigins.includes(incomingRequestOrigin) ||
-      process.env.NODE_ENV !== "production"
+      process.env.NODE_ENV !== "production" ||
+      fullAllowedOrigins.includes(incomingRequestOrigin)
     ) {
       return callback(null, {
-        origin: true,
+        origin: incomingRequestOrigin || true,
         credentials: true,
         exposedHeaders: ["x-visitor-id", "x-conversation-id"],
+        methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       });
     }
 

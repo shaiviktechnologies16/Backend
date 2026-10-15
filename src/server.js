@@ -21,8 +21,13 @@ async function bootstrap() {
       );
     }
 
-    await connectRedis();
-    console.log("✅ Redis connected");
+    try {
+      await connectRedis();
+      console.log("✅ Redis connected");
+    } catch (redisErr) {
+      console.warn("⚠️ Redis startup warning:", redisErr?.message || redisErr);
+      console.warn("ℹ️ Server running with local concurrency fallback.");
+    }
 
     app.listen(port, "0.0.0.0", () => {
       console.log(`${name} v${version} is running on port ${port}`);

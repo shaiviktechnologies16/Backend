@@ -2,6 +2,7 @@ import { OllamaProvider } from "./ollama/ollama.provider.js";
 import { OpenAIProvider } from "./openai/openai.provider.js";
 import { AIWorkerPool } from "./router/ai-worker-pool.js";
 import { AIInferenceRouter } from "./router/ai-inference-router.js";
+import { redisClient } from "../infrastructure/redis/redis.client.js";
 
 export function createAIProviderFactory({
   getPlatformApiKeyValueUseCase,
@@ -18,6 +19,7 @@ export function createAIProviderFactory({
 
   const openAIProvider = new OpenAIProvider({
     getPlatformApiKeyValueUseCase,
+    redisClient: redisClient || null,
   });
 
   const aiInferenceRouter = new AIInferenceRouter({
