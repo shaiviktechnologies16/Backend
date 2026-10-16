@@ -150,9 +150,24 @@ export const streamChat = asyncHandler(async (req, res) => {
 
     console.log("[ChatDebug] SSE error:", error.message);
 
+    let clientErrorMessage = error.message || "Chat request failed.";
+    if (
+      error?.statusCode === 530 ||
+      error?.statusCode === 502 ||
+      error?.statusCode === 503 ||
+      error?.statusCode === 504 ||
+      error?.upstreamStatus === 530 ||
+      /530|524|520|cloudflare|dns|timeout|econnreset|fetch failed/i.test(
+        error?.message || "",
+      )
+    ) {
+      clientErrorMessage =
+        "The AI service is temporarily unavailable. Please try again shortly.";
+    }
+
     if (!res.writableEnded) {
       writeEvent(res, "error", {
-        message: error.message,
+        message: clientErrorMessage,
       });
     }
   } finally {

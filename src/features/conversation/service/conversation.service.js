@@ -1128,45 +1128,62 @@ export class ConversationService {
       const ollamaStartedAt = Date.now();
       console.log("[ChatDebug] AI generation started");
 
-      for await (const event of aiProvider.stream(currentMessages, {
-        model: agent.model,
-        temperature: agent.temperature,
-        maxTokens: dynamicMaxTokens,
-        tools,
-        signal: options?.signal,
-      })) {
-        if (event.type === "usage") {
-          usage = {
-            inputTokens: usage.inputTokens + (event.usage?.inputTokens ?? 0),
-            outputTokens: usage.outputTokens + (event.usage?.outputTokens ?? 0),
-            totalTokens: usage.totalTokens + (event.usage?.totalTokens ?? 0),
-          };
+      try {
+        for await (const event of aiProvider.stream(currentMessages, {
+          model: agent.model,
+          temperature: agent.temperature,
+          maxTokens: dynamicMaxTokens,
+          tools,
+          signal: options?.signal,
+        })) {
+          if (event.type === "usage") {
+            usage = {
+              inputTokens: usage.inputTokens + (event.usage?.inputTokens ?? 0),
+              outputTokens: usage.outputTokens + (event.usage?.outputTokens ?? 0),
+              totalTokens: usage.totalTokens + (event.usage?.totalTokens ?? 0),
+            };
 
-          continue;
+            continue;
+          }
+
+          if (event.type === "timing") {
+            ollamaTtfbMs = event.timing?.ollamaTtfbMs ?? ollamaTtfbMs;
+            ollamaTotalMs = event.timing?.ollamaTotalMs ?? ollamaTotalMs;
+            continue;
+          }
+
+          if (event.type === "token") {
+            streamedText += event.content;
+            reply += event.content;
+
+            yield {
+              type: "token",
+              content: event.content,
+            };
+
+            continue;
+          }
+
+          if (event.type === "tool_calls") {
+            toolCalls.push(...event.toolCalls);
+            continue;
+          }
+        }
+      } catch (aiErr) {
+        console.error("[ChatDebug] AI generation error:", aiErr.message);
+
+        if (reply.trim().length > 0) {
+          console.warn(
+            "[ChatDebug] AI stream interrupted midway - saving partial response",
+            {
+              replyLength: reply.length,
+              error: aiErr.message,
+            },
+          );
+          break;
         }
 
-        if (event.type === "timing") {
-          ollamaTtfbMs = event.timing?.ollamaTtfbMs ?? ollamaTtfbMs;
-          ollamaTotalMs = event.timing?.ollamaTotalMs ?? ollamaTotalMs;
-          continue;
-        }
-
-        if (event.type === "token") {
-          streamedText += event.content;
-          reply += event.content;
-
-          yield {
-            type: "token",
-            content: event.content,
-          };
-
-          continue;
-        }
-
-        if (event.type === "tool_calls") {
-          toolCalls.push(...event.toolCalls);
-          continue;
-        }
+        throw aiErr;
       }
 
       const ollamaIterationMs = Date.now() - ollamaStartedAt;
@@ -2329,6 +2346,19 @@ export class ConversationService {
           errorCode: aiErr.code || aiErr.errorCode,
           message: aiErr.message,
         });
+
+        if (chunkCount > 0 && reply.trim().length > 0) {
+          console.warn(
+            "[PublicChatDebug] AI_STREAM_INTERRUPTED_MIDWAY - preserving partial response",
+            {
+              requestId,
+              chunkCount,
+              replyLength: reply.length,
+              error: aiErr.message,
+            },
+          );
+          break;
+        }
 
         if (
           chunkCount === 0 &&

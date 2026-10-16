@@ -114,7 +114,13 @@ export class OpenAIProvider extends AIProvider {
     if (error.name === "AbortError" || error.code === "ABORT_ERR") return false;
 
     // Daily quota exhaustion, insufficient credits, or authorization errors are NOT transient
-    const status = error.status || error.statusCode;
+    const status =
+      error.status ||
+      error.statusCode ||
+      error.upstreamStatus ||
+      error.cause?.status ||
+      error.cause?.statusCode;
+
     if (status === 401 || status === 402 || status === 403) {
       return false;
     }
@@ -135,8 +141,9 @@ export class OpenAIProvider extends AIProvider {
       status === 502 ||
       status === 503 ||
       status === 504 ||
+      status === 530 ||
       status === 429 ||
-      (typeof status === "number" && status >= 520)
+      (typeof status === "number" && status >= 500 && status <= 599)
     ) {
       return true;
     }
@@ -147,17 +154,26 @@ export class OpenAIProvider extends AIProvider {
       code === "ETIMEDOUT" ||
       code === "ENOTFOUND" ||
       code === "ECONNREFUSED" ||
-      code === "UND_ERR_CONNECT_TIMEOUT"
+      code === "UND_ERR_CONNECT_TIMEOUT" ||
+      code === "ERR_STREAM_PREMATURE_CLOSE"
     ) {
       return true;
     }
 
     if (
       error.type === "system" ||
-      error.message?.includes("fetch failed") ||
-      error.message?.includes("Bad Gateway") ||
-      error.message?.includes("Service Unavailable") ||
-      error.message?.includes("Gateway Timeout")
+      msg.includes("530") ||
+      msg.includes("524") ||
+      msg.includes("520") ||
+      msg.includes("origin dns error") ||
+      msg.includes("fetch failed") ||
+      msg.includes("bad gateway") ||
+      msg.includes("service unavailable") ||
+      msg.includes("gateway timeout") ||
+      msg.includes("internal server error") ||
+      msg.includes("stream connection interrupted") ||
+      msg.includes("terminated") ||
+      msg.includes("premature close")
     ) {
       return true;
     }
@@ -301,7 +317,6 @@ export class OpenAIProvider extends AIProvider {
     const targetModel = options.model || this.model;
     const maxRetries = 2;
     let client = null;
-    let stream = null;
 
     try {
       client = await this.getClient();
@@ -313,6 +328,17 @@ export class OpenAIProvider extends AIProvider {
         cause: clientErr,
       });
     }
+
+    // Candidate models for resilient fallback if primary free model experiences 530/outage
+    const modelCandidates = [
+      targetModel,
+      ...(targetModel.includes("nemotron-3-super")
+        ? [
+            "nvidia/nemotron-3.5-lightning:free",
+            "google/gemma-4-26b-a4b-it:free",
+          ]
+        : []),
+    ];
 
     // Step 1: Acquire rate limiter permit FIRST without occupying a concurrency slot
     const refundRateToken = await this.rateLimiter.acquire({
@@ -347,6 +373,8 @@ export class OpenAIProvider extends AIProvider {
     }
 
     try {
+      let tokensEmitted = 0;
+
       for (let attempt = 0; attempt <= maxRetries; attempt++) {
         if (attempt > 0) {
           await this.rateLimiter.acquire({
@@ -356,29 +384,72 @@ export class OpenAIProvider extends AIProvider {
           });
         }
 
+        const activeModel =
+          modelCandidates[Math.min(attempt, modelCandidates.length - 1)];
+
         try {
           // Mark as dispatched immediately before calling upstream client
           isDispatched = true;
 
-          stream = await client.chat.completions.create(
-            {
-              model: targetModel,
-              messages,
-              temperature: options.temperature,
-              max_tokens: options.maxTokens,
-              stream: true,
-              stream_options: {
-                include_usage: true,
-              },
+          const createParams = {
+            model: activeModel,
+            messages,
+            temperature: options.temperature,
+            max_tokens: options.maxTokens,
+            stream: true,
+            stream_options: {
+              include_usage: true,
             },
-            {
-              signal: options.signal,
-            },
-          );
-          break;
+          };
+
+          // Optimizing OpenRouter reasoning models to prevent gateway timeouts
+          if (
+            activeModel.includes("nemotron") ||
+            activeModel.includes("reasoning")
+          ) {
+            createParams.reasoning = { effort: "low" };
+          }
+
+          const stream = await client.chat.completions.create(createParams, {
+            signal: options.signal,
+          });
+
+          for await (const chunk of stream) {
+            if (options.signal?.aborted) {
+              return;
+            }
+
+            const content = chunk.choices?.[0]?.delta?.content;
+
+            if (typeof content === "string" && content) {
+              tokensEmitted++;
+              yield {
+                type: "token",
+                content,
+              };
+            }
+
+            if (chunk.usage) {
+              const inputTokens = chunk.usage.prompt_tokens ?? 0;
+              const outputTokens = chunk.usage.completion_tokens ?? 0;
+
+              yield {
+                type: "usage",
+                usage: {
+                  inputTokens,
+                  outputTokens,
+                  totalTokens:
+                    chunk.usage.total_tokens ?? inputTokens + outputTokens,
+                },
+              };
+            }
+          }
+
+          // Stream completed successfully!
+          return;
         } catch (streamErr) {
           if (streamErr.name === "AbortError" || options.signal?.aborted) {
-            throw streamErr;
+            return;
           }
 
           const isTransient = this._isTransientError(streamErr);
@@ -390,26 +461,45 @@ export class OpenAIProvider extends AIProvider {
             this.rateLimiter.pauseFor(delayMs);
           }
 
-          console.warn("[OPENAI STREAM CONNECT ATTEMPT FAILED]", {
+          console.warn("[OPENAI STREAM ATTEMPT FAILED]", {
             attempt: attempt + 1,
             maxRetries: maxRetries + 1,
+            activeModel,
+            tokensEmitted,
             isTransient,
-            status: streamErr.status,
+            status: streamErr.status || streamErr.statusCode,
             code: streamErr.code,
             message: streamErr.message,
             retryAfterSec,
-            model: targetModel,
           });
 
+          // If tokens were ALREADY emitted to caller, we cannot re-emit from scratch
+          if (tokensEmitted > 0) {
+            throw new ProviderError(
+              `Stream connection interrupted by AI provider (${streamErr.status || streamErr.statusCode || streamErr.code || "530"}).`,
+              {
+                provider: this.name,
+                model: activeModel,
+                upstreamStatus: streamErr.status || streamErr.statusCode || 530,
+                isTransient,
+                tokensEmitted: true,
+                tokensEmittedCount: tokensEmitted,
+                cause: streamErr,
+              },
+            );
+          }
+
+          // If 0 tokens were emitted, and error is not transient or retries exhausted, throw
           if (!isTransient || attempt >= maxRetries) {
             if (streamErr instanceof ProviderError) throw streamErr;
             throw new ProviderError(
-              `Unable to stream from AI provider (${streamErr.status || streamErr.code || "upstream error"}).`,
+              `Unable to stream from AI provider (${streamErr.status || streamErr.statusCode || streamErr.code || "upstream error"}).`,
               {
                 provider: this.name,
-                model: targetModel,
-                upstreamStatus: streamErr.status,
+                model: activeModel,
+                upstreamStatus: streamErr.status || streamErr.statusCode,
                 isTransient,
+                tokensEmitted: false,
                 cause: streamErr,
               },
             );
@@ -424,55 +514,6 @@ export class OpenAIProvider extends AIProvider {
 
           await new Promise((resolve) => setTimeout(resolve, backoffMs));
         }
-      }
-
-      try {
-        for await (const chunk of stream) {
-          if (options.signal?.aborted) {
-            break;
-          }
-
-          const content = chunk.choices?.[0]?.delta?.content;
-
-          if (typeof content === "string" && content) {
-            yield {
-              type: "token",
-              content,
-            };
-          }
-
-          if (chunk.usage) {
-            const inputTokens = chunk.usage.prompt_tokens ?? 0;
-            const outputTokens = chunk.usage.completion_tokens ?? 0;
-
-            yield {
-              type: "usage",
-              usage: {
-                inputTokens,
-                outputTokens,
-                totalTokens:
-                  chunk.usage.total_tokens ?? inputTokens + outputTokens,
-              },
-            };
-          }
-        }
-      } catch (iterErr) {
-        if (iterErr.name === "AbortError" || options.signal?.aborted) {
-          return;
-        }
-        if (iterErr instanceof ProviderError) {
-          throw iterErr;
-        }
-        throw new ProviderError(
-          "Stream connection interrupted by AI provider.",
-          {
-            provider: this.name,
-            model: targetModel,
-            upstreamStatus: iterErr.status,
-            isTransient: this._isTransientError(iterErr),
-            cause: iterErr,
-          },
-        );
       }
     } finally {
       if (releaseConcurrencySlot) {

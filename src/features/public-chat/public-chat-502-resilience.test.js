@@ -473,3 +473,131 @@ test("publicChatController maps ProviderError to clean user-safe SSE message", a
   );
   assert.equal(errorEvent.includes("Internal Server error status 502"), false);
 });
+
+test("publicChatController maps status 530 to clean user-safe SSE message", async () => {
+  const writtenEvents = [];
+  const mockRes = {
+    writableEnded: false,
+    setHeader: () => {},
+    on: () => {},
+    write: (chunk) => writtenEvents.push(chunk),
+    flush: () => {},
+    end: () => {
+      mockRes.writableEnded = true;
+    },
+  };
+
+  const mockPublicChatStreamUseCase = {
+    execute: async function* () {
+      const err = new Error("Internal server error: Failed to get response from AI provider (status 530)");
+      err.statusCode = 530;
+      throw err;
+    },
+  };
+
+  const controller = createPublicChatController({
+    publicChatStreamUseCase: mockPublicChatStreamUseCase,
+  });
+
+  const mockReq = {
+    params: { publicKey: "agt_pk_test" },
+    body: { message: "Hello AI" },
+    headers: { "x-visitor-id": "visitor-1" },
+  };
+
+  await controller.streamPublicChat(mockReq, mockRes);
+
+  const errorEvent = writtenEvents.find((evt) => evt.includes("event: error"));
+  assert.equal(Boolean(errorEvent), true);
+  assert.equal(
+    errorEvent.includes("The AI service is temporarily unavailable. Please try again shortly."),
+    true,
+    "Must output friendly message instead of raw status 530",
+  );
+  assert.equal(errorEvent.includes("status 530"), false);
+});
+
+test("ConversationService.streamPublicMessage preserves partial reply on mid-stream 530 interruption", async () => {
+  const mockAgent = {
+    id: "agent-1",
+    projectId: "proj-1",
+    model: "nvidia/nemotron-3-super-120b-a12b:free",
+    visibility: "PUBLIC",
+    project: { organizationId: "org-1" },
+  };
+
+  const mockAiProvider = {
+    maxContextMessages: 20,
+    stream: async function* () {
+      yield { type: "token", content: "Shaivik AI provides intelligent " };
+      yield { type: "token", content: "customer support automation." };
+      const err = new Error("Stream connection interrupted by AI provider (530).");
+      err.statusCode = 530;
+      throw err;
+    },
+  };
+
+  const savedMessages = [];
+
+  const service = new ConversationService({
+    agentRepository: {
+      findByPublicKey: async () => mockAgent,
+    },
+    conversationRepository: {
+      findById: async () => null,
+      findLatestByVisitorAndAgent: async () => null,
+      createForStreaming: async (conv) => ({ ...conv, id: "conv-1" }),
+      update: async () => {},
+    },
+    messageRepository: {
+      create: async (msg) => savedMessages.push(msg),
+      findRecentByConversationId: async () => [],
+      delete: async () => {},
+    },
+    aiProviderFactory: {
+      getProviderByName: () => mockAiProvider,
+    },
+    aiContextService: {
+      buildPublic: async () => ({ instructions: "Help the user." }),
+      buildSystemMessage: () => ({ role: "system", content: "System instructions." }),
+    },
+    knowledgeSearchService: {
+      search: async () => [],
+    },
+    getPlatformConfigUseCase: {
+      getValue: async () => "No context available.",
+    },
+    checkPlanUsageUseCase: {
+      execute: async () => ({
+        usage: { daily: { requests: 1 } },
+        limits: { requestsPerDay: 50 },
+      }),
+    },
+    usageRepository: { create: async () => {} },
+  });
+
+  service.validateAgentModelAccess = async () => true;
+  service.getCompanyTimezone = async () => "Asia/Kolkata";
+
+  const stream = service.streamPublicMessage(
+    "agt_pk_valid",
+    "Tell me about Shaivik AI",
+    "visitor-1",
+  );
+
+  const emittedTokens = [];
+  let completed = false;
+
+  for await (const chunk of stream) {
+    if (chunk.type === "token") emittedTokens.push(chunk.content);
+    if (chunk.type === "done") completed = true;
+  }
+
+  assert.equal(
+    emittedTokens.join(""),
+    "Shaivik AI provides intelligent customer support automation.",
+    "Stream must emit generated tokens before interruption",
+  );
+  assert.equal(completed, true, "Stream must cleanly complete with done event despite mid-stream 530 error");
+});
+

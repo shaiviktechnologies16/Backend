@@ -263,8 +263,13 @@ export const createPublicChatController = ({
           error?.statusCode === 502 ||
           error?.statusCode === 503 ||
           error?.statusCode === 504 ||
+          error?.statusCode === 530 ||
+          error?.upstreamStatus === 530 ||
           error?.errorCode === "PROVIDER_ERROR" ||
-          (error?.statusCode >= 500 && !error?.isOperational)
+          (error?.statusCode >= 500 && !error?.isOperational) ||
+          /530|524|520|cloudflare|dns|timeout|econnreset|fetch failed/i.test(
+            error?.message || "",
+          )
         ) {
           message =
             "The AI service is temporarily unavailable. Please try again shortly.";
