@@ -40,6 +40,8 @@ export class ConversationService {
     whatsappProvider = null,
     companyProfileRepository = null,
     sendHandoverNotificationToWhatsappUseCase = null,
+    captureLeadUseCase = null,
+    leadRepository = null,
   }) {
     this.conversationRepository = conversationRepository;
     this.messageRepository = messageRepository;
@@ -65,6 +67,8 @@ export class ConversationService {
     this.companyProfileRepository = companyProfileRepository;
     this.sendHandoverNotificationToWhatsappUseCase =
       sendHandoverNotificationToWhatsappUseCase;
+    this.captureLeadUseCase = captureLeadUseCase;
+    this.leadRepository = leadRepository;
     this.agentTypingRegistry = new Map();
   }
 
@@ -279,6 +283,9 @@ export class ConversationService {
     conversation.setHandoverMode(Boolean(isHandover));
     const updated = await this.conversationRepository.update(conversation);
 
+    let notificationSent = false;
+    let notificationError = null;
+
     if (Boolean(isHandover) && !wasHandover) {
       try {
         const agent = await this.agentRepository.findById(conversation.agentId);
@@ -319,6 +326,22 @@ export class ConversationService {
               userMsg = lastUser?.content;
             }
 
+            let leadInfo = null;
+            if (this.leadRepository) {
+              try {
+                leadInfo =
+                  await this.leadRepository.findExistingForConversation(
+                    conversation.id,
+                    conversation.visitorId,
+                  );
+              } catch (leadErr) {
+                console.warn(
+                  "[HANDOVER_LEAD_LOOKUP_WARNING]:",
+                  leadErr.message,
+                );
+              }
+            }
+
             const notificationResult =
               await this.sendHandoverNotificationToWhatsappUseCase.execute({
                 organizationId: orgId,
@@ -328,13 +351,17 @@ export class ConversationService {
                 projectName: agent?.project?.name,
                 visitorId: conversation.visitorId,
                 lastMessage: userMsg || "Handover requested by visitor",
+                lead: leadInfo,
               });
 
+            notificationSent = true;
             console.log(
               "[HANDOVER_WHATSAPP_NOTIFICATION_SENT]",
               notificationResult,
             );
           } catch (err) {
+            notificationSent = false;
+            notificationError = err.message;
             console.error(
               "[HANDOVER_WHATSAPP_NOTIFICATION_FAILED]:",
               err.message,
@@ -342,11 +369,98 @@ export class ConversationService {
           }
         }
       } catch (err) {
+        notificationError = err.message;
         console.error("[HANDOVER NOTIFICATION ERROR]:", err.message);
       }
     }
 
+    if (updated) {
+      updated.notificationSent = notificationSent;
+      updated.notificationError = notificationError;
+    }
+
     return updated;
+  }
+
+  extractLeadDetails(content) {
+    if (!content || typeof content !== "string") return null;
+
+    const text = content.trim();
+
+    // 1. Phone number (Indian/international 10-12 digits)
+    const phoneMatch = text.match(
+      /(?:(?:\+|00)91[\s.-]*)?[6789]\d{9}\b|\b\d{10}\b/,
+    );
+    const phone = phoneMatch ? phoneMatch[0].replace(/\D/g, "") : null;
+
+    // 2. Email address
+    const emailMatch = text.match(
+      /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/,
+    );
+    const email = emailMatch ? emailMatch[0] : null;
+
+    // 3. Name (explicit indicator, e.g. "my name is John", "name: John", "i am John")
+    let name = null;
+    const nameMatch = text.match(
+      /(?:my name is|i am|this is|name\s*[:\-])\s+([A-Za-z][A-Za-z\s]{1,30})/i,
+    );
+    if (nameMatch) {
+      name = nameMatch[1].trim();
+    }
+
+    // 4. Company (explicit indicator, e.g. "company: Acme", "firm: Acme")
+    let company = null;
+    const companyMatch = text.match(
+      /(?:company\s*[:\-]|firm\s*[:\-]|from\s+organization\s*[:\-])\s+([A-Za-z0-9][A-Za-z0-9\s.,&-]{1,40})/i,
+    );
+    if (companyMatch) {
+      company = companyMatch[1].trim();
+    }
+
+    if (!phone && !email) {
+      return null;
+    }
+
+    return {
+      name,
+      phone,
+      email,
+      company,
+      requirement: text,
+    };
+  }
+
+  async recordVisitorLeadIfPresent({ conversation, content, agent }) {
+    if (!this.captureLeadUseCase || !content || !conversation) return null;
+
+    const leadData = this.extractLeadDetails(content);
+    if (!leadData) return null;
+
+    try {
+      const result = await this.captureLeadUseCase.execute({
+        agentId: conversation.agentId,
+        conversationId: conversation.id,
+        visitorId: conversation.visitorId,
+        name: leadData.name || null,
+        phone: leadData.phone || null,
+        email: leadData.email || null,
+        requirement: leadData.requirement || content,
+        source: "AI_AGENT",
+        status: "NEW",
+        metadata: leadData.company ? { company: leadData.company } : {},
+      });
+
+      console.log("[LEAD_CAPTURED_FROM_CONVERSATION]", {
+        conversationId: conversation.id,
+        leadId: result?.lead?.id,
+        whatsappSent: Boolean(result?.whatsapp?.sent),
+      });
+
+      return result?.lead || null;
+    } catch (err) {
+      console.error("[LEAD_CAPTURE_FROM_CONVERSATION_FAILED]:", err.message);
+      return null;
+    }
   }
 
   async completeConversation({ userId = null, conversationId }) {
@@ -1456,14 +1570,32 @@ export class ConversationService {
     const isHandoverTriggered = isHumanHandoverIntent(content);
 
     if (isHandoverTriggered && !conversation.isHandover) {
-      await this.toggleHandoverMode({
+      const initialLead = await this.recordVisitorLeadIfPresent({
+        conversation,
+        content,
+        agent,
+      });
+
+      const handoverResult = await this.toggleHandoverMode({
         conversationId: conversation.id,
         isHandover: true,
         lastMessage: content,
       });
 
-      const replyText =
-        "Our support agent has been notified and will join your chat shortly.";
+      const notificationSuccess = Boolean(
+        handoverResult?.notificationSent ?? conversation.notificationSent,
+      );
+
+      let replyText;
+      if (notificationSuccess) {
+        replyText = initialLead
+          ? "Our support agent has been notified and will join your chat shortly. We've received your contact details and forwarded them to the team."
+          : "Our support agent has been notified and will join your chat shortly. Feel free to leave your contact details or project requirements here so we can best assist you.";
+      } else {
+        replyText = initialLead
+          ? "You have been connected to our support channel. Our automated notification system encountered a delay reaching our on-call agents, but your contact details have been saved for our team."
+          : "You have been connected to our support channel. Our automated notification system encountered a delay reaching our on-call agents, but your request is queued. Please provide your name, phone number, or email here so our team can follow up with you directly.";
+      }
 
       const assistantMsg = new Message({
         conversationId: conversation.id,
@@ -1481,12 +1613,37 @@ export class ConversationService {
     }
 
     if (conversation.isHandover) {
-      return {
-        conversation,
-        reply: null,
-        isHandover: true,
-      };
+      if (isReturnToAiIntent(content)) {
+        await this.toggleHandoverMode({
+          conversationId: conversation.id,
+          isHandover: false,
+          lastMessage: content,
+        });
+        conversation.isHandover = false;
+        console.log("[ChatDebug] HANDOVER_RESET_TO_AI", {
+          conversationId: conversation.id,
+        });
+      } else {
+        await this.recordVisitorLeadIfPresent({
+          conversation,
+          content,
+          agent,
+        });
+
+        return {
+          conversation,
+          reply: null,
+          isHandover: true,
+        };
+      }
     }
+
+    // In normal AI conversation, capture lead details if provided
+    await this.recordVisitorLeadIfPresent({
+      conversation,
+      content,
+      agent,
+    });
 
     const aiProvider = this.aiProviderFactory.getProviderByName(
       agent.aiModel?.provider ?? agent.provider ?? "ollama",
@@ -2001,14 +2158,32 @@ export class ConversationService {
     });
 
     if (isHandoverTriggered && !conversation.isHandover) {
-      await this.toggleHandoverMode({
+      const initialLead = await this.recordVisitorLeadIfPresent({
+        conversation,
+        content,
+        agent,
+      });
+
+      const handoverResult = await this.toggleHandoverMode({
         conversationId: conversation.id,
         isHandover: true,
         lastMessage: content,
       });
 
-      const noticeText =
-        "Our support agent has been notified and will join your chat shortly.";
+      const notificationSuccess = Boolean(
+        handoverResult?.notificationSent ?? conversation.notificationSent,
+      );
+
+      let noticeText;
+      if (notificationSuccess) {
+        noticeText = initialLead
+          ? "Our support agent has been notified and will join your chat shortly. We've received your contact details and forwarded them to the team."
+          : "Our support agent has been notified and will join your chat shortly. Feel free to leave your contact details or project requirements here so we can best assist you.";
+      } else {
+        noticeText = initialLead
+          ? "You have been connected to our support channel. Our automated notification system encountered a delay reaching our on-call agents, but your contact details have been saved for our team."
+          : "You have been connected to our support channel. Our automated notification system encountered a delay reaching our on-call agents, but your request is queued. Please provide your name, phone number, or email here so our team can follow up with you directly.";
+      }
 
       const assistantMsg = new Message({
         conversationId: conversation.id,
@@ -2042,8 +2217,19 @@ export class ConversationService {
           requestId,
           conversationId: conversation.id,
         });
-        const handoverNotice =
-          "Your conversation is currently connected with support. A representative will respond to your messages shortly. (To switch back to the AI assistant, say 'back to AI' or click 'Return to AI').";
+
+        const capturedLead = await this.recordVisitorLeadIfPresent({
+          conversation,
+          content,
+          agent,
+        });
+
+        const handoverNotice = capturedLead
+          ? "Thank you! Your contact details have been recorded and sent to our support team. A representative will reach out to you shortly."
+          : isHumanHandoverIntent(content)
+            ? "Your request has already been sent to our support team, and an agent has been notified. They will join this chat or reach out to you shortly."
+            : "Your conversation is currently connected with support. A representative will respond to your messages shortly. (To switch back to the AI assistant, say 'back to AI' or click 'Return to AI').";
+
         yield {
           type: "token",
           content: handoverNotice,
@@ -2052,6 +2238,13 @@ export class ConversationService {
         return;
       }
     }
+
+    // In normal AI conversation, capture lead details if provided
+    await this.recordVisitorLeadIfPresent({
+      conversation,
+      content,
+      agent,
+    });
 
     const conversationSetupMs = Date.now() - conversationSetupStartedAt;
 

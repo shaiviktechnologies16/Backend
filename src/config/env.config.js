@@ -17,7 +17,14 @@ const envConfig = {
   },
 
   evolution: {
-    baseUrl: process.env.EVOLUTION_API_URL,
+    baseUrl:
+      process.env.USE_LOCAL_EVOLUTION === "true"
+        ? process.env.EVOLUTION_API_URL || "http://localhost:8080"
+        : process.env.EVOLUTION_API_URL &&
+            !process.env.EVOLUTION_API_URL.includes("localhost") &&
+            !process.env.EVOLUTION_API_URL.includes("127.0.0.1")
+          ? process.env.EVOLUTION_API_URL
+          : "https://evolution-api-2lcn.onrender.com",
     apiKey: process.env.EVOLUTION_API_KEY,
     webhookUrl: process.env.EVOLUTION_WEBHOOK_URL,
   },

@@ -261,3 +261,58 @@ test("Duplicate Handoff Prevention: Notifications are sent only once per handove
   assert.equal(whatsappNotificationCount, 1, "Must remain exactly 1 notification");
 });
 
+test("Handoff Intent: Contact detail sharing and phone messages trigger handover", () => {
+  const contactCases = [
+    "Please connect me with an agent, my phone is 9876543210",
+    "I want to share my contact details with your support team",
+    "Need callback from your team, my number is 9010510476",
+    "Connect to agent",
+    "Please call me back at 9010510476",
+    "I want to talk to your team, my email is test@shaivik.in",
+  ];
+
+  for (const message of contactCases) {
+    const result = isHumanHandoverIntent(message);
+    assert.equal(
+      result,
+      true,
+      `Expected TRUE for contact handover message: "${message}", but got ${result}`,
+    );
+  }
+});
+
+test("Lead Extraction: extracts phone, email, name, and requirements accurately", async () => {
+  const { ConversationService } = await import("./conversation.service.js");
+  const service = new ConversationService({});
+
+  const sample1 = "My name is Rakesh, phone: 9010510476, email: rakesh@example.com. Need website for my business.";
+  const lead1 = service.extractLeadDetails(sample1);
+  assert.ok(lead1);
+  assert.equal(lead1.name, "Rakesh");
+  assert.equal(lead1.phone, "9010510476");
+  assert.equal(lead1.email, "rakesh@example.com");
+
+  const sample2 = "Call me at 9876543210";
+  const lead2 = service.extractLeadDetails(sample2);
+  assert.ok(lead2);
+  assert.equal(lead2.phone, "9876543210");
+
+  const sample3 = "No contact details here, just a simple query.";
+  const lead3 = service.extractLeadDetails(sample3);
+  assert.equal(lead3, null);
+});
+
+test("Handover Response: Honest confirmation distinguishes successful and failed WhatsApp delivery", async () => {
+  // Successful notification confirmation
+  const successNotice =
+    "Our support agent has been notified and will join your chat shortly. Feel free to leave your contact details or project requirements here so we can best assist you.";
+  assert.match(successNotice, /agent has been notified/i);
+
+  // Failed notification confirmation must NOT claim agent was notified
+  const failedNotice =
+    "You have been connected to our support channel. Our automated notification system encountered a delay reaching our on-call agents, but your request is queued. Please provide your name, phone number, or email here so our team can follow up with you directly.";
+  assert.doesNotMatch(failedNotice, /agent has been notified/i);
+  assert.doesNotMatch(failedNotice, /will join your chat shortly/i);
+  assert.match(failedNotice, /automated notification system encountered a delay/i);
+}
+);

@@ -471,6 +471,8 @@ export const conversationService = new ConversationService({
   companyProfileRepository: companyProfileModule.companyProfileRepository,
   sendHandoverNotificationToWhatsappUseCase:
     whatsappModule.sendHandoverNotificationToWhatsappUseCase,
+  captureLeadUseCase: leadModule.captureLeadUseCase,
+  leadRepository: leadModule.leadRepository,
 });
 
 whatsappModule.handleEvolutionWebhookUseCase.conversationRepository =

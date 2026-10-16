@@ -23,6 +23,7 @@ export class SendHandoverNotificationToWhatsappUseCase {
     projectName,
     visitorId,
     lastMessage,
+    lead = null,
   }) {
     if (!organizationId) {
       throw new AppError(
@@ -95,6 +96,7 @@ export class SendHandoverNotificationToWhatsappUseCase {
       projectName,
       visitorId,
       lastMessage,
+      lead,
     });
 
     const sent = [];
@@ -164,14 +166,14 @@ export class SendHandoverNotificationToWhatsappUseCase {
     const digits = String(phone).replace(/\D/g, "");
 
     if (digits.startsWith("91") && digits.length === 12) {
-      return `+${digits}`;
+      return digits;
     }
 
     if (digits.length === 10) {
-      return `+91${digits}`;
+      return `91${digits}`;
     }
 
-    return `+${digits}`;
+    return digits;
   }
 
   buildMessage({
@@ -182,6 +184,7 @@ export class SendHandoverNotificationToWhatsappUseCase {
     projectName,
     visitorId,
     lastMessage,
+    lead = null,
   }) {
     const baseUrl = (
       process.env.FRONTEND_URL || "https://admin.shaiviktechnologies.in"
@@ -197,7 +200,7 @@ export class SendHandoverNotificationToWhatsappUseCase {
       conversationUrl += `?${params.join("&")}`;
     }
 
-    return [
+    const lines = [
       "🚨 *AGENT SUPPORT REQUESTED*",
       "",
       "A visitor requested to speak with a support agent.",
@@ -207,11 +210,23 @@ export class SendHandoverNotificationToWhatsappUseCase {
       `Project   : ${projectName || "Workspace Project"}`,
       `Visitor   : ${visitorId || "Public Visitor"}`,
       `Message   : "${lastMessage || "I want to talk to an agent."}"`,
-      "",
-      "*Open Conversation in Workspace:*",
-      conversationUrl,
-      "",
-      "Click the link above to view and respond to the visitor.",
-    ].join("\n");
+    ];
+
+    if (lead) {
+      lines.push("");
+      lines.push("*Lead Details*");
+      if (lead.name) lines.push(`Name      : ${lead.name}`);
+      if (lead.phone) lines.push(`Phone     : ${lead.phone}`);
+      if (lead.email) lines.push(`Email     : ${lead.email}`);
+      if (lead.requirement) lines.push(`Enquiry   : ${lead.requirement}`);
+    }
+
+    lines.push("");
+    lines.push("*Open Conversation in Workspace:*");
+    lines.push(conversationUrl);
+    lines.push("");
+    lines.push("Click the link above to view and respond to the visitor.");
+
+    return lines.join("\n");
   }
 }

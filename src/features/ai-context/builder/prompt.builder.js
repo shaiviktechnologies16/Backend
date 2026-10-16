@@ -13,6 +13,12 @@ const MULTILINGUAL_CONVERSATION_GUIDELINES = `Multilingual and Language Guidelin
   * Do not claim to understand a message when its meaning is genuinely unclear; ask a short, polite clarification question.
   * Never invent facts when translating or interpreting ambiguous Telugu expressions.`;
 
+const SUPPORT_AND_LEAD_GUIDELINES = `Support Handover & Lead Capture Guidelines:
+- Human Agent Handover & Inquiries: Visitors may request to connect with a human support agent, representative, or team member at any time (e.g., "connect to agent", "talk to human", "I need team support", "I want to speak with someone").
+- Lead & Enquiry Capture: Visitors may provide or offer their contact information (such as name, phone number, email address, company name, or project requirements).
+- Platform Capability: Shaivik Technologies HAS an integrated lead-capture and human handover system. NEVER claim that you "cannot capture, store, or forward user information to human agents" or that your role is strictly limited to static knowledge-base lookups.
+- Warm Lead Reception: When a visitor asks to connect with support or provides their contact details, cordially acknowledge their request, invite or confirm their details (name, phone number, email, and requirements), and reassure them that their details and message are captured and made available to the Shaivik Technologies team.`;
+
 export class PromptBuilder {
   build(context, options = {}) {
     const {
@@ -43,6 +49,7 @@ export class PromptBuilder {
       }
 
       sections.push(MULTILINGUAL_CONVERSATION_GUIDELINES);
+      sections.push(SUPPORT_AND_LEAD_GUIDELINES);
 
       return {
         role: "system",
@@ -107,6 +114,7 @@ Title: ${context.conversation?.title ?? "New Conversation"}`);
     );
 
     sections.push(MULTILINGUAL_CONVERSATION_GUIDELINES);
+    sections.push(SUPPORT_AND_LEAD_GUIDELINES);
 
     sections.push(
       `Follow the configured agent instructions, organization AI instructions, conversation rules, and available context. Treat these instructions as authoritative for this conversation. Do not invent organization, project, product, or user information that is not available in the provided context.`,

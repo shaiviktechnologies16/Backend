@@ -145,14 +145,14 @@ export class SendLeadToWhatsappUseCase {
     const digits = String(phone).replace(/\D/g, "");
 
     if (digits.startsWith("91") && digits.length === 12) {
-      return `+${digits}`;
+      return digits;
     }
 
     if (digits.length === 10) {
-      return `+91${digits}`;
+      return `91${digits}`;
     }
 
-    return `+${digits}`;
+    return digits;
   }
 
   buildMessage(lead) {
