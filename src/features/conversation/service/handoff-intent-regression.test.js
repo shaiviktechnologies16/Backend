@@ -115,6 +115,12 @@ test("Handoff Intent: Positive cases (MUST trigger handoff)", () => {
     "reach out to your team",
     "contact your team",
     "get in touch with your team",
+    "need to talk wth your team",
+    "talk wth team",
+    "connect wth team",
+    "connect wth your team",
+    "wanna talk wth your team",
+    "talk to someone from your team",
 
     // 3. Explicit handover commands
     "handover this chat to a real person",

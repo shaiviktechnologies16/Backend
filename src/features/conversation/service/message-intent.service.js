@@ -73,17 +73,17 @@ const TECHNICAL_OR_CAPABILITY_PATTERNS = [
  */
 const POSITIVE_HANDOVER_PATTERNS = [
   // 1. Explicit requests for a human, real person, or live agent
-  /\b(talk|speak|chat|connect|transfer|switch|escalate|route|reach)\s+(me\s+)?(to|with)?\s*(a\s+|an\s+|the\s+)?(real\s+person|human(\s+being)?|live\s+agent|real\s+human|live\s+person|human\s+agent|human\s+support|human\s+rep|human\s+representative|human\s+operator)\b/i,
-  /\b(want|need|like|prefer|wish|can\s+i|could\s+i|let\s+me)\s+(to\s+)?(talk|speak|chat|connect)\s+(to|with)?\s*(a\s+|an\s+|the\s+)?(real\s+person|human(\s+being)?|live\s+agent|real\s+human|live\s+person|human\s+agent|human\s+support|human\s+rep|human\s+representative|human\s+operator)\b/i,
+  /\b(talk|speak|chat|connect|transfer|switch|escalate|route|reach)\s+(me\s+)?(to|with|wth|wid|wit|wt|2)?\s*(a\s+|an\s+|the\s+)?(real\s+person|human(\s+being)?|live\s+agent|real\s+human|live\s+person|human\s+agent|human\s+support|human\s+rep|human\s+representative|human\s+operator)\b/i,
+  /\b(want|wanna|need|gotta|have\s+to|wish|like|prefer|can\s+i|could\s+i|let\s+me)\s+(to\s+)?(talk|speak|chat|connect)\s+(to|with|wth|wid|wit|wt|2)?\s*(a\s+|an\s+|the\s+)?(real\s+person|human(\s+being)?|live\s+agent|real\s+human|live\s+person|human\s+agent|human\s+support|human\s+rep|human\s+representative|human\s+operator)\b/i,
   /\b(i\s+want|i\s+need|get\s+me|give\s+me)\s+(a\s+)?(human|real\s+person|live\s+agent|human\s+agent)\b/i,
   /\b(human\s+agent|live\s+agent|real\s+person)\s+(please|now|immediately|help|assist)\b/i,
 
   // 2. Explicit support team / customer care / executive / team escalation
-  // (e.g. "need to talk with your team", "talk with team", "connect with team", "talk to your team")
-  /\b(want|need|wish|like|prefer|can\s+i|could\s+i|let\s+me|i\s+want|i\s+need|please)\s+(to\s+)?(talk|speak|chat|connect|reach(\s+out)?|contact|get\s+in\s+touch)\s+(to|with)?\s*(your\s+|the\s+|our\s+|a\s+|an\s+)?(team|team\s*member|support\s*(team|agent|staff|rep|representative|person|executive)|customer\s+support(\s+team)?|customer\s+care(\s+team)?|helpdesk(\s+team)?|executive|representative|rep|agent|staff)\b/i,
-  /\b(talk|speak|chat|connect)\s+(to|with)\s*(your\s+|the\s+|our\s+|a\s+|an\s+)?(team|team\s*member|support\s*(team|agent|staff|rep|representative|person|executive)|customer\s+support(\s+team)?|customer\s+care(\s+team)?|helpdesk(\s+team)?|executive|representative|rep|agent|staff)\b/i,
-  /\b(transfer|connect|switch|escalate|route|reach)\s+(me\s+|this\s+(chat|conversation)\s+)?(to|with)\s*(your\s+|the\s+|our\s+|a\s+|an\s+)?(team|team\s*member|support\s*(team|agent|staff|rep|representative|person|executive)|customer\s+support(\s+team)?|customer\s+care(\s+team)?|helpdesk(\s+team)?|live\s+support|agent|executive|representative)\b/i,
-  /\b(contact|reach(\s+out\s+to)?|get\s+in\s+touch\s+with)\s+(your\s+|the\s+|our\s+)?(team|team\s*member|support\s*(team|staff|agent|rep)|customer\s+care|helpdesk)\b/i,
+  // (e.g. "need to talk with your team", "need to talk wth your team", "talk with team", "connect with team")
+  /\b(want|wanna|need|gotta|have\s+to|wish|like|prefer|can\s+i|could\s+i|let\s+me|i\s+want|i\s+need|please)\s+(to\s+)?(talk|speak|chat|connect|reach(\s+out)?|contact|get\s+in\s+touch)\s+(to|with|wth|wid|wit|wt|2)?\s*((someone|anyone|somebody|anybody)\s+(from|in|on|at)\s+)?(your\s+|the\s+|our\s+|a\s+|an\s+)?(team|team\s*member|support\s*(team|agent|staff|rep|representative|person|executive)|customer\s+support(\s+team)?|customer\s+care(\s+team)?|helpdesk(\s+team)?|executive|representative|rep|agent|staff)\b/i,
+  /\b(talk|speak|chat|connect)\s+(to|with|wth|wid|wit|wt|2)?\s*((someone|anyone|somebody|anybody)\s+(from|in|on|at)\s+)?(your\s+|the\s+|our\s+|a\s+|an\s+)?(team|team\s*member|support\s*(team|agent|staff|rep|representative|person|executive)|customer\s+support(\s+team)?|customer\s+care(\s+team)?|helpdesk(\s+team)?|executive|representative|rep|agent|staff)\b/i,
+  /\b(transfer|connect|switch|escalate|route|reach)\s+(me\s+|this\s+(chat|conversation)\s+)?(to|with|wth|wid|wit|wt|2)?\s*(your\s+|the\s+|our\s+|a\s+|an\s+)?(team|team\s*member|support\s*(team|agent|staff|rep|representative|person|executive)|customer\s+support(\s+team)?|customer\s+care(\s+team)?|helpdesk(\s+team)?|live\s+support|agent|executive|representative)\b/i,
+  /\b(contact|reach(\s+out\s+to)?|get\s+in\s+touch\s+(with|wth)?)\s+(your\s+|the\s+|our\s+)?(team|team\s*member|support\s*(team|staff|agent|rep)|customer\s+care|helpdesk)\b/i,
   /\b(can|could|would)\s+(a\s+)?(support|customer\s+care|helpdesk|team)\s+(representative|agent|executive|person|member)\s+(help|assist|talk\s+to|speak\s+with)\b/i,
   /\b(customer\s*care|support\s*care)\b/i,
 
