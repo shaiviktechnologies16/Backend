@@ -46,6 +46,20 @@ export class EnquiryNotificationRecipientRepositoryImpl {
     });
   }
 
+  async findAnyEnabled(channel = "WHATSAPP", manager = null) {
+    const repository = this.getRepository(manager);
+
+    return repository.find({
+      where: {
+        channel,
+        enabled: true,
+      },
+      order: {
+        createdAt: "ASC",
+      },
+    });
+  }
+
   async findByPhoneNumber(
     organizationId,
     recipientPhoneNumber,

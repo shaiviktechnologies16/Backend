@@ -61,11 +61,23 @@ export class SendHandoverNotificationToWhatsappUseCase {
       );
     }
 
-    const recipients =
+    let recipients =
       await this.enquiryNotificationRecipientRepository.findEnabledByOrganizationAndChannel(
         organizationId,
         "WHATSAPP",
       );
+
+    if (!recipients || !recipients.length) {
+      if (
+        typeof this.enquiryNotificationRecipientRepository.findAnyEnabled ===
+        "function"
+      ) {
+        recipients =
+          await this.enquiryNotificationRecipientRepository.findAnyEnabled(
+            "WHATSAPP",
+          );
+      }
+    }
 
     if (!recipients || !recipients.length) {
       throw new AppError(

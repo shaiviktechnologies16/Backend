@@ -2362,24 +2362,115 @@ export class ConversationService {
 
         if (
           chunkCount === 0 &&
-          createdUserMessageId &&
-          typeof this.messageRepository.delete === "function"
+          (providerName === "ollama" || !agent.aiModel?.provider) &&
+          this.aiProviderFactory.getProviderByName("openai")
         ) {
+          console.warn(
+            "[PublicChatDebug] OLLAMA_OFFLINE_FALLBACK_TO_OPENAI - retrying with OpenRouter/OpenAI provider",
+            { requestId, originalError: aiErr.message },
+          );
           try {
-            await this.messageRepository.delete(createdUserMessageId);
-            console.log("[PublicChatDebug] CLEANED_UP_ORPHANED_USER_MESSAGE", {
-              requestId,
-              messageId: createdUserMessageId,
-            });
-          } catch (cleanupErr) {
-            console.warn(
-              "[PublicChatDebug] FAILED_TO_CLEAN_UP_USER_MESSAGE",
-              cleanupErr.message,
-            );
-          }
-        }
+            const fallbackProvider =
+              this.aiProviderFactory.getProviderByName("openai");
+            const fallbackModel =
+              process.env.OPENAI_MODEL ||
+              "nvidia/nemotron-3-super-120b-a12b:free";
+            for await (const event of fallbackProvider.stream(currentMessages, {
+              model: fallbackModel,
+              temperature: agent.temperature,
+              maxTokens: dynamicMaxTokens,
+              tools,
+              signal: options?.signal,
+            })) {
+              if (event.type === "usage") {
+                usage = {
+                  inputTokens:
+                    usage.inputTokens + (event.usage?.inputTokens ?? 0),
+                  outputTokens:
+                    usage.outputTokens + (event.usage?.outputTokens ?? 0),
+                  totalTokens:
+                    usage.totalTokens + (event.usage?.totalTokens ?? 0),
+                };
+                continue;
+              }
 
-        throw aiErr;
+              if (event.type === "timing") {
+                ollamaTtfbMs = event.timing?.ollamaTtfbMs ?? ollamaTtfbMs;
+                ollamaTotalMs = event.timing?.ollamaTotalMs ?? ollamaTotalMs;
+                continue;
+              }
+
+              if (event.type === "token") {
+                streamedText += event.content;
+                reply += event.content;
+                chunkCount++;
+
+                if (isFirstChunk) {
+                  isFirstChunk = false;
+                  console.log("[PublicChatDebug] AI_FIRST_CHUNK", {
+                    requestId,
+                    conversationId: conversation.id,
+                    chunkLength: event.content.length,
+                  });
+                } else if (chunkCount % 10 === 0) {
+                  console.log("[PublicChatDebug] AI_CHUNK_PROGRESS", {
+                    requestId,
+                    conversationId: conversation.id,
+                    chunkCount,
+                    accumulatedLength: reply.length,
+                  });
+                }
+
+                yield {
+                  type: "token",
+                  content: event.content,
+                };
+
+                continue;
+              }
+
+              if (event.type === "tool_calls") {
+                toolCalls.push(...event.toolCalls);
+              }
+            }
+          } catch (fallbackErr) {
+            console.error(
+              "[PublicChatDebug] FALLBACK_AI_GENERATION_FAILED",
+              fallbackErr.message,
+            );
+            if (
+              chunkCount === 0 &&
+              createdUserMessageId &&
+              typeof this.messageRepository.delete === "function"
+            ) {
+              try {
+                await this.messageRepository.delete(createdUserMessageId);
+              } catch (_) {}
+            }
+            throw fallbackErr;
+          }
+        } else {
+          if (
+            chunkCount === 0 &&
+            createdUserMessageId &&
+            typeof this.messageRepository.delete === "function"
+          ) {
+            try {
+              await this.messageRepository.delete(createdUserMessageId);
+              console.log("[PublicChatDebug] CLEANED_UP_ORPHANED_USER_MESSAGE", {
+                requestId,
+                messageId: createdUserMessageId,
+              });
+            } catch (cleanupErr) {
+              console.warn(
+                "[PublicChatDebug] FAILED_TO_CLEAN_UP_USER_MESSAGE",
+                cleanupErr.message,
+              );
+            }
+          }
+
+          throw aiErr;
+        }
       }
 
       console.log("[PublicChatDebug] AI_GENERATION_COMPLETE", {
