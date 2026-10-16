@@ -40,6 +40,22 @@ const handoverCases = [
   "speak with executive",
   "support care",
   "handover this chat to a real person",
+  "need to talk with your team",
+  "talk with team",
+  "connect with team",
+  "need to talk with team",
+  "talk with your team",
+  "talk to your team",
+  "connect with your team",
+  "connect to your team",
+  "can i talk to your team",
+  "can i connect with your team",
+  "can i connect with team",
+  "let me talk with your team",
+  "please connect me to your team",
+  "reach out to your team",
+  "contact your team",
+  "team tho matladali",
 ];
 
 for (const msg of handoverCases) {

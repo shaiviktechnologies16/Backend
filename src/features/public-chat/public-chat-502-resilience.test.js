@@ -474,6 +474,47 @@ test("publicChatController maps ProviderError to clean user-safe SSE message", a
   assert.equal(errorEvent.includes("Internal Server error status 502"), false);
 });
 
+test("publicChatController maps generic Error with status 502 without statusCode to clean user-safe SSE message", async () => {
+  const writtenEvents = [];
+  const mockRes = {
+    writableEnded: false,
+    setHeader: () => {},
+    on: () => {},
+    write: (chunk) => writtenEvents.push(chunk),
+    flush: () => {},
+    end: () => {
+      mockRes.writableEnded = true;
+    },
+  };
+
+  const mockPublicChatStreamUseCase = {
+    execute: async function* () {
+      throw new Error("Internal Server error status 502");
+    },
+  };
+
+  const controller = createPublicChatController({
+    publicChatStreamUseCase: mockPublicChatStreamUseCase,
+  });
+
+  const mockReq = {
+    params: { publicKey: "agt_pk_test" },
+    body: { message: "What services do you offer?" },
+    headers: { "x-visitor-id": "visitor-1" },
+  };
+
+  await controller.streamPublicChat(mockReq, mockRes);
+
+  const errorEvent = writtenEvents.find((evt) => evt.includes("event: error"));
+  assert.equal(Boolean(errorEvent), true);
+  assert.equal(
+    errorEvent.includes("The AI service is temporarily unavailable. Please try again shortly."),
+    true,
+    "Must output friendly message instead of raw status 502",
+  );
+  assert.equal(errorEvent.includes("Internal Server error status 502"), false);
+});
+
 test("publicChatController maps status 530 to clean user-safe SSE message", async () => {
   const writtenEvents = [];
   const mockRes = {

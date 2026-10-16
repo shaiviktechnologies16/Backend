@@ -260,23 +260,58 @@ export const createPublicChatController = ({
           message = "This agent is not publicly accessible.";
         } else if (
           error instanceof ProviderError ||
+          error?.status === 500 ||
+          error?.status === 502 ||
+          error?.status === 503 ||
+          error?.status === 504 ||
+          error?.status === 520 ||
+          error?.status === 524 ||
+          error?.status === 530 ||
+          error?.statusCode === 500 ||
           error?.statusCode === 502 ||
           error?.statusCode === 503 ||
           error?.statusCode === 504 ||
+          error?.statusCode === 520 ||
+          error?.statusCode === 524 ||
           error?.statusCode === 530 ||
+          error?.upstreamStatus === 500 ||
+          error?.upstreamStatus === 502 ||
+          error?.upstreamStatus === 503 ||
+          error?.upstreamStatus === 504 ||
+          error?.upstreamStatus === 520 ||
+          error?.upstreamStatus === 524 ||
           error?.upstreamStatus === 530 ||
           error?.errorCode === "PROVIDER_ERROR" ||
-          (error?.statusCode >= 500 && !error?.isOperational) ||
-          /530|524|520|cloudflare|dns|timeout|econnreset|fetch failed/i.test(
+          (typeof error?.statusCode === "number" && error.statusCode >= 500 && !error?.isOperational) ||
+          (typeof error?.status === "number" && error.status >= 500 && !error?.isOperational) ||
+          /500|502|503|504|520|524|530|status\s*5\d\d|bad\s*gateway|service\s*(temporarily\s*)?unavailable|gateway\s*timeout|internal\s*server\s*error|cloudflare|dns|timeout|econnreset|fetch\s*failed/i.test(
             error?.message || "",
           )
         ) {
           message =
             "The AI service is temporarily unavailable. Please try again shortly.";
         } else if (error instanceof Error && error.message) {
-          message = error.message;
+          if (
+            /500|502|503|504|520|524|530|status\s*5\d\d|internal\s*server\s*error|bad\s*gateway/i.test(
+              error.message,
+            )
+          ) {
+            message =
+              "The AI service is temporarily unavailable. Please try again shortly.";
+          } else {
+            message = error.message;
+          }
         } else if (typeof error === "string") {
-          message = error;
+          if (
+            /500|502|503|504|520|524|530|status\s*5\d\d|internal\s*server\s*error|bad\s*gateway/i.test(
+              error,
+            )
+          ) {
+            message =
+              "The AI service is temporarily unavailable. Please try again shortly.";
+          } else {
+            message = error;
+          }
         }
 
         if (!res.writableEnded) {
