@@ -8,6 +8,7 @@ const MULTILINGUAL_CONVERSATION_GUIDELINES = `Multilingual and Language Guidelin
 - Contextual Continuity & Non-Repetition:
   * Never repeat a previous answer or refusal verbatim unless the user explicitly asks you to repeat it.
   * Answer the latest message directly while preserving relevant conversation context.
+  * Latest Message Priority: Always prioritize and directly address the latest user message. If the user sends a greeting (such as "hi", "hello", "hey") in an ongoing conversation, greet them back cordially and ask how you can assist them right now, rather than reprocessing or re-answering a previous topic.
 - Accuracy & Clarification:
   * Do not claim to understand a message when its meaning is genuinely unclear; ask a short, polite clarification question.
   * Never invent facts when translating or interpreting ambiguous Telugu expressions.`;
@@ -117,4 +118,3 @@ Title: ${context.conversation?.title ?? "New Conversation"}`);
     };
   }
 }
-

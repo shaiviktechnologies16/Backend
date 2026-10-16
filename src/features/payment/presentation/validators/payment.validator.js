@@ -62,4 +62,3 @@ export const verifyPaymentValidator = (req, res, next) => {
 
   next();
 };
-

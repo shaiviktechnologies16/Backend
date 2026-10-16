@@ -98,11 +98,21 @@ export class PostgresMessageRepository extends MessageRepository {
       },
       order: {
         createdAt: "DESC",
+        id: "DESC",
       },
       take: limit,
     });
 
-    return entities.reverse().map((entity) => this.toDomain(entity));
+    entities.sort((a, b) => {
+      const timeDiff =
+        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      if (timeDiff !== 0) return timeDiff;
+      if (a.role === "user" && b.role === "assistant") return -1;
+      if (a.role === "assistant" && b.role === "user") return 1;
+      return String(a.id).localeCompare(String(b.id));
+    });
+
+    return entities.map((entity) => this.toDomain(entity));
   }
 
   async deleteByConversationId(conversationId, manager = null) {
@@ -115,8 +125,18 @@ export class PostgresMessageRepository extends MessageRepository {
     });
   }
 
-  async delete(id, manager = null) {
-    const repository = this.getRepository(manager);
-    await repository.delete({ id });
+  async delete(id, conversationId = null, manager = null) {
+    let actualManager = manager;
+    let actualConvId = conversationId;
+    if (conversationId && typeof conversationId === "object" && !manager) {
+      actualManager = conversationId;
+      actualConvId = null;
+    }
+    const repository = this.getRepository(actualManager);
+    const where = { id };
+    if (actualConvId && typeof actualConvId === "string") {
+      where.conversation = { id: actualConvId };
+    }
+    await repository.delete(where);
   }
 }

@@ -67,7 +67,29 @@ export class OpenAIProvider extends AIProvider {
   }
 
   async getClient() {
-    const apiKey = await this.getPlatformApiKeyValueUseCase.execute("openai");
+    let apiKey = null;
+
+    if (this.getPlatformApiKeyValueUseCase) {
+      try {
+        apiKey = await this.getPlatformApiKeyValueUseCase.execute("openai");
+      } catch (keyErr) {
+        apiKey =
+          process.env.OPENROUTER_API_KEY?.trim() ||
+          process.env.OPENAI_API_KEY?.trim() ||
+          null;
+        if (!apiKey) {
+          throw new ProviderError(
+            "OpenAI-compatible provider API key is not configured in database or environment.",
+            { cause: keyErr },
+          );
+        }
+      }
+    } else {
+      apiKey =
+        process.env.OPENROUTER_API_KEY?.trim() ||
+        process.env.OPENAI_API_KEY?.trim() ||
+        null;
+    }
 
     if (!apiKey) {
       throw new ProviderError(

@@ -2149,6 +2149,32 @@ export class ConversationService {
       content: message.content,
     }));
 
+    // Ensure the current user message is always the final turn in history
+    const lastMsg = messages[messages.length - 1];
+    if (!lastMsg || lastMsg.role !== "user" || lastMsg.content !== content) {
+      const existingIdx = messages.findLastIndex
+        ? messages.findLastIndex(
+            (m) => m.role === "user" && m.content === content,
+          )
+        : -1;
+      if (existingIdx !== -1) {
+        messages.splice(existingIdx, 1);
+      }
+      messages.push({
+        role: MessageRole.USER,
+        content,
+      });
+    }
+
+    // If an immediately preceding message was also a user message (orphaned from a prior failed attempt),
+    // and current turn is a simple greeting, drop the abandoned query so AI greets freshly.
+    if (messages.length >= 2) {
+      const secondLastMsg = messages[messages.length - 2];
+      if (secondLastMsg.role === "user" && isSimpleMessage) {
+        messages.splice(messages.length - 2, 1);
+      }
+    }
+
     /*
      * RAG / tools prompt assembly
      */
@@ -2444,7 +2470,10 @@ export class ConversationService {
               typeof this.messageRepository.delete === "function"
             ) {
               try {
-                await this.messageRepository.delete(createdUserMessageId);
+                await this.messageRepository.delete(
+                  createdUserMessageId,
+                  conversation.id,
+                );
               } catch (_) {}
             }
             throw fallbackErr;
@@ -2456,10 +2485,14 @@ export class ConversationService {
             typeof this.messageRepository.delete === "function"
           ) {
             try {
-              await this.messageRepository.delete(createdUserMessageId);
+              await this.messageRepository.delete(
+                createdUserMessageId,
+                conversation.id,
+              );
               console.log("[PublicChatDebug] CLEANED_UP_ORPHANED_USER_MESSAGE", {
                 requestId,
                 messageId: createdUserMessageId,
+                conversationId: conversation.id,
               });
             } catch (cleanupErr) {
               console.warn(
