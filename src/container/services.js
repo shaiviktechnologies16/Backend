@@ -384,7 +384,9 @@ const workspaceDashboardModule = createWorkspaceDashboardModule({
   requireWorkspaceAccess: contextModule.middlewares.workspaceContextMiddleware,
 });
 
-const analyticsModule = createAnalyticsModule();
+const analyticsModule = createAnalyticsModule({
+  projectRepository,
+});
 
 organizationModule.createOrganizationUseCase.organizationInvitationRepository =
   organizationInvitationModule.organizationInvitationRepository;

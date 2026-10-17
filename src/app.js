@@ -46,6 +46,8 @@ import createWorkspaceBrandingRoutes from "./features/workspace/branding/present
 import createRbacRoutes from "./features/rbac/presentation/routes/rbac.routes.js";
 import { RbacController } from "./features/rbac/presentation/controllers/rbac.controller.js";
 import createAnalyticsRoutes from "./features/analytics/presentation/routes/analytics.routes.js";
+import { createProjectAnalyticsRoutes } from "./features/analytics/presentation/routes/project-analytics.routes.js";
+import { createPublicAnalyticsRoutes } from "./features/analytics/presentation/routes/public-analytics.routes.js";
 import { createPlanRoutes } from "./features/platform/plans/presentation/routes/plan.routes.js";
 import { createPaymentRoutes } from "./features/payment/presentation/routes/payment.routes.js";
 import {
@@ -149,6 +151,16 @@ app.post(
   verifyPaymentValidator,
   paymentModule.paymentController.verifyPayment,
 );
+
+app.get(["/analytics.js", "/public/analytics.js"], (req, res) => {
+  const filePath = path.resolve(__dirname, "../../Admin/public/analytics.js");
+  if (fs.existsSync(filePath)) {
+    res.setHeader("Content-Type", "application/javascript");
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    return res.sendFile(filePath);
+  }
+  res.status(404).send("// analytics.js not found");
+});
 
 app.get("/health", (req, res) => {
   res.status(200).json({
@@ -569,6 +581,30 @@ app.use(
     controller: publicChatModule.publicChatController,
   }),
 );
+app.use(
+  "/api/public/analytics",
+  createPublicAnalyticsRoutes({
+    publicAnalyticsController: analyticsModule.publicAnalyticsController,
+  }),
+);
+
+app.use(
+  "/api/v1/projects/:projectId/analytics",
+  createProjectAnalyticsRoutes({
+    projectAnalyticsController: analyticsModule.projectAnalyticsController,
+    authMiddleware,
+    workspaceContextMiddleware:
+      contextModule.middlewares.workspaceContextMiddleware,
+    checkProjectAccessUseCase: projectMemberModule.checkProjectAccessUseCase,
+    getUserPermissionsUseCase: adminModule.getUserPermissionsUseCase,
+    workspaceMemberPermissionRepository:
+      contextModule.workspaceMemberPermissionRepository,
+    organizationMemberRepository:
+      organizationMemberModule.organizationMemberRepository,
+    rbacRepository,
+  }),
+);
+
 app.use(
   "/api/v1/analytics",
   createAnalyticsRoutes({

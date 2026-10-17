@@ -49,6 +49,8 @@ import { VideoProjectOrmEntity } from "../features/ai-video/infrastructure/datab
 import { VideoSceneOrmEntity } from "../features/ai-video/infrastructure/database/video-scene.orm-entity.js";
 import { VideoCharacterOrmEntity } from "../features/ai-video/infrastructure/database/video-character.orm-entity.js";
 import { VideoAssetOrmEntity } from "../features/ai-video/infrastructure/database/video-asset.orm-entity.js";
+import { ProjectAnalyticsConfigOrmEntity } from "../features/analytics/infrastructure/database/project-analytics-config.orm-entity.js";
+import { ProjectVisitorEventOrmEntity } from "../features/analytics/infrastructure/database/project-visitor-event.orm-entity.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -126,6 +128,8 @@ export const AppDataSource = new DataSource({
     VideoSceneOrmEntity,
     VideoCharacterOrmEntity,
     VideoAssetOrmEntity,
+    ProjectAnalyticsConfigOrmEntity,
+    ProjectVisitorEventOrmEntity,
   ],
 
   migrations: [path.join(__dirname, "migrations/*.js")],
