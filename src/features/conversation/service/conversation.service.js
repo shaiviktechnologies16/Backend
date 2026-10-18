@@ -72,6 +72,34 @@ export class ConversationService {
     this.agentTypingRegistry = new Map();
   }
 
+  _resolveProviderAndModel(agent) {
+    let providerName = agent?.aiModel?.provider ?? agent?.provider ?? "openai";
+    let modelName =
+      agent?.aiModel?.model ??
+      agent?.model ??
+      process.env.OPENAI_MODEL ??
+      "nvidia/nemotron-3-super-120b-a12b:free";
+
+    // Strict requirement: do not check with ollama, use nvidia free model which we are using in production
+    if (providerName.toLowerCase() === "ollama") {
+      providerName = "openai";
+    }
+
+    if (
+      !modelName ||
+      modelName === "qwen3:8b" ||
+      modelName === "qwen2.5vl:7b" ||
+      modelName === "nomic-embed-text:latest" ||
+      modelName === "gpt-4o-mini" ||
+      modelName === "nemotron-3-super-120b-a12b:free"
+    ) {
+      modelName =
+        process.env.OPENAI_MODEL || "nvidia/nemotron-3-super-120b-a12b:free";
+    }
+
+    return { providerName, modelName };
+  }
+
   calculateDynamicMaxTokens({
     agentMaxTokens,
     isSimpleMessage,
@@ -861,9 +889,8 @@ export class ConversationService {
       await this.safeUpdateConversation(conversation, manager);
     });
 
-    const aiProvider = this.aiProviderFactory.getProviderByName(
-      agent.aiModel?.provider ?? agent.provider ?? "ollama",
-    );
+    const { providerName, modelName } = this._resolveProviderAndModel(agent);
+    const aiProvider = this.aiProviderFactory.getProviderByName(providerName);
 
     if (!aiProvider) {
       throw new AppError(
@@ -902,7 +929,7 @@ export class ConversationService {
     const toolMessages = [...messages];
 
     let response = await aiProvider.chat(toolMessages, {
-      model: agent.model,
+      model: modelName,
       temperature: agent.temperature,
       maxTokens: agent.maxTokens,
       tools: agentTools.schemas,
@@ -1096,9 +1123,8 @@ export class ConversationService {
 
     const providerStartedAt = Date.now();
 
-    const aiProvider = this.aiProviderFactory.getProviderByName(
-      agent.aiModel?.provider ?? agent.provider ?? "ollama",
-    );
+    const { providerName, modelName } = this._resolveProviderAndModel(agent);
+    const aiProvider = this.aiProviderFactory.getProviderByName(providerName);
 
     if (!aiProvider) {
       throw new AppError(
@@ -1244,7 +1270,7 @@ export class ConversationService {
 
       try {
         for await (const event of aiProvider.stream(currentMessages, {
-          model: agent.model,
+          model: modelName,
           temperature: agent.temperature,
           maxTokens: dynamicMaxTokens,
           tools,
@@ -1645,9 +1671,8 @@ export class ConversationService {
       agent,
     });
 
-    const aiProvider = this.aiProviderFactory.getProviderByName(
-      agent.aiModel?.provider ?? agent.provider ?? "ollama",
-    );
+    const { providerName, modelName } = this._resolveProviderAndModel(agent);
+    const aiProvider = this.aiProviderFactory.getProviderByName(providerName);
 
     if (!aiProvider) {
       throw new AppError(
@@ -1706,7 +1731,7 @@ export class ConversationService {
 
     while (toolIterations < maxToolIterations) {
       const response = await aiProvider.chat(currentMessages, {
-        model: agent.model,
+        model: modelName,
         temperature: agent.temperature,
         maxTokens: agent.maxTokens,
         tools,
@@ -1802,7 +1827,7 @@ export class ConversationService {
           visitorId: conversation.visitorId,
           organizationId: agent.project?.organizationId ?? null,
           networkIdentityHash,
-          modelName: agent.aiModel?.providerModelId ?? agent.model ?? null,
+          modelName: modelName ?? null,
           costUsd: 0,
           inputTokens: 0,
           outputTokens: 0,
@@ -2269,10 +2294,11 @@ export class ConversationService {
 
     const providerStartedAt = Date.now();
 
-    const providerName = agent.aiModel?.provider ?? agent.provider ?? "ollama";
+    const { providerName, modelName } = this._resolveProviderAndModel(agent);
     console.log("[PublicChatDebug] AI_PROVIDER_RESOLUTION_START", {
       requestId,
       providerName,
+      modelName,
     });
 
     const aiProvider = this.aiProviderFactory.getProviderByName(providerName);
@@ -2490,8 +2516,8 @@ export class ConversationService {
       requestId,
       conversationId: conversation.id,
       agentId: agent.id,
-      provider: agent.aiModel?.provider ?? agent.provider ?? "ollama",
-      model: agent.model,
+      provider: providerName,
+      model: modelName,
     });
 
     let chunkCount = 0;
@@ -2505,7 +2531,7 @@ export class ConversationService {
 
       try {
         for await (const event of aiProvider.stream(currentMessages, {
-          model: agent.model,
+          model: modelName,
           temperature: agent.temperature,
           maxTokens: dynamicMaxTokens,
           tools,
@@ -2564,8 +2590,8 @@ export class ConversationService {
       } catch (aiErr) {
         console.error("[PublicChatDebug] AI_GENERATION_FAILED", {
           requestId,
-          provider: agent.aiModel?.provider ?? agent.provider ?? "ollama",
-          model: agent.model,
+          provider: providerName,
+          model: modelName,
           errorName: aiErr.name,
           errorCode: aiErr.code || aiErr.errorCode,
           message: aiErr.message,
@@ -2586,11 +2612,10 @@ export class ConversationService {
 
         if (
           chunkCount === 0 &&
-          (providerName === "ollama" || !agent.aiModel?.provider) &&
           this.aiProviderFactory.getProviderByName("openai")
         ) {
           console.warn(
-            "[PublicChatDebug] OLLAMA_OFFLINE_FALLBACK_TO_OPENAI - retrying with OpenRouter/OpenAI provider",
+            "[PublicChatDebug] AI_PROVIDER_RETRY_FALLBACK - retrying with OpenRouter/OpenAI provider",
             { requestId, originalError: aiErr.message },
           );
           try {
@@ -2820,7 +2845,8 @@ export class ConversationService {
     try {
       await executeTransaction(async (queryRunner) => {
         const manager = queryRunner.manager;
-        const selectedModel = agent.aiModel?.model ?? agent.model ?? null;
+        const selectedModel =
+          modelName || agent.aiModel?.model || agent.model || null;
 
         const costUsd = this.modelCostCalculatorService
           ? this.modelCostCalculatorService.calculateCost({

@@ -48,35 +48,26 @@ export class KnowledgeSearchService {
       (model) => model.capability === "EMBEDDING" && model.status === "ACTIVE",
     );
 
-    if (!embeddingModel) {
-      throw new AppError(
-        "No active embedding model is configured.",
-        503,
-        "EMBEDDING_MODEL_NOT_CONFIGURED",
-      );
-    }
+    let queryEmbedding = null;
 
-    const provider = this.embeddingProviderFactory.getProvider(
-      embeddingModel.provider,
-    );
-
-    const embeddingStartedAt = Date.now();
-
-    const [queryEmbedding] = await provider.embed([query.trim()], {
-      model: embeddingModel.model,
-    });
-
-    console.log("[RAG EMBEDDING]", {
-      durationMs: Date.now() - embeddingStartedAt,
-      model: embeddingModel.model,
-    });
-
-    if (!queryEmbedding) {
-      throw new AppError(
-        "Unable to generate query embedding.",
-        500,
-        "QUERY_EMBEDDING_FAILED",
-      );
+    // Do NOT check with Ollama for embeddings in production
+    if (embeddingModel && embeddingModel.provider?.toLowerCase() !== "ollama") {
+      try {
+        const provider = this.embeddingProviderFactory.getProvider(
+          embeddingModel.provider,
+        );
+        const embeddingStartedAt = Date.now();
+        const [emb] = await provider.embed([query.trim()], {
+          model: embeddingModel.model,
+        });
+        queryEmbedding = emb;
+        console.log("[RAG EMBEDDING]", {
+          durationMs: Date.now() - embeddingStartedAt,
+          model: embeddingModel.model,
+        });
+      } catch (embErr) {
+        console.warn("[RAG EMBEDDING SKIPPED]", embErr.message);
+      }
     }
 
     const searchStartedAt = Date.now();
@@ -90,16 +81,22 @@ export class KnowledgeSearchService {
         limit: limit ?? topK,
         similarityThreshold,
       });
-    } else {
+    } else if (queryEmbedding) {
       results = await this.knowledgeChunkRepository.searchSimilar({
         projectId,
         embedding: queryEmbedding,
         limit: limit ?? topK,
         similarityThreshold,
       });
+    } else if (typeof this.knowledgeChunkRepository.searchFullText === "function") {
+      results = await this.knowledgeChunkRepository.searchFullText({
+        projectId,
+        query: query.trim(),
+        limit: limit ?? topK,
+      });
     }
 
-    if (!results || results.length === 0) {
+    if ((!results || results.length === 0) && queryEmbedding) {
       results = await this.knowledgeChunkRepository.searchSimilar({
         projectId,
         embedding: queryEmbedding,

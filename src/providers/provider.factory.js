@@ -37,9 +37,15 @@ export function createAIProviderFactory({
   return {
     async getProvider() {
       const providerName =
-        await getPlatformConfigUseCase.getValue("AI_PROVIDER");
+        (await getPlatformConfigUseCase.getValue("AI_PROVIDER")) || "openai";
 
-      const provider = providers[providerName] ?? null;
+      // Production directive: do not check with ollama, use openai (NVIDIA free model via OpenRouter)
+      const normalizedName = providerName.toLowerCase();
+      if (!normalizedName || normalizedName === "ollama") {
+        return providers.openai;
+      }
+
+      const provider = providers[normalizedName] ?? providers.openai;
 
       if (!provider) {
         throw new Error(`Unsupported AI provider: ${providerName}`);
@@ -49,10 +55,12 @@ export function createAIProviderFactory({
     },
 
     getProviderByName(name) {
-      if (!name) {
-        return providers.ollama;
+      const normalizedName = (name || "").toLowerCase();
+      // Production directive: do not check with ollama, use openai (NVIDIA free model via OpenRouter)
+      if (!normalizedName || normalizedName === "ollama") {
+        return providers.openai;
       }
-      return providers[name] ?? providers.ollama;
+      return providers[normalizedName] ?? providers.openai;
     },
 
     getWorkerPool() {

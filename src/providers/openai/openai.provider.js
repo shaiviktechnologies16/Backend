@@ -52,11 +52,29 @@ export class OpenAIProvider extends AIProvider {
   }
 
   get model() {
-    return process.env.OPENAI_MODEL || "nemotron-3-super-120b-a12b:free";
+    return (
+      process.env.OPENAI_MODEL || "nvidia/nemotron-3-super-120b-a12b:free"
+    );
   }
 
   get maxContextMessages() {
     return 30;
+  }
+
+  _resolveModel(model) {
+    let target = model || this.model;
+    if (
+      !target ||
+      target === "qwen3:8b" ||
+      target === "qwen2.5vl:7b" ||
+      target === "nomic-embed-text:latest" ||
+      target === "gpt-4o-mini" ||
+      target === "nemotron-3-super-120b-a12b:free"
+    ) {
+      target =
+        process.env.OPENAI_MODEL || "nvidia/nemotron-3-super-120b-a12b:free";
+    }
+    return target;
   }
 
   getConcurrencyMetrics() {
@@ -204,7 +222,7 @@ export class OpenAIProvider extends AIProvider {
   }
 
   async chat(messages, options = {}) {
-    const targetModel = options.model || this.model;
+    const targetModel = this._resolveModel(options.model);
     const maxRetries = 2;
     let client = null;
 
@@ -265,17 +283,23 @@ export class OpenAIProvider extends AIProvider {
           // Mark as dispatched immediately before calling upstream client
           isDispatched = true;
 
-          return await client.chat.completions.create(
-            {
-              model: targetModel,
-              messages,
-              temperature: options.temperature,
-              max_tokens: options.maxTokens,
-            },
-            {
-              signal: options.signal,
-            },
-          );
+          const createParams = {
+            model: targetModel,
+            messages,
+            temperature: options.temperature,
+            max_tokens: options.maxTokens,
+          };
+
+          if (
+            targetModel.includes("nemotron") ||
+            targetModel.includes("reasoning")
+          ) {
+            createParams.reasoning = { effort: "none" };
+          }
+
+          return await client.chat.completions.create(createParams, {
+            signal: options.signal,
+          });
         } catch (error) {
           if (error.name === "AbortError" || options.signal?.aborted) {
             throw error;
@@ -336,7 +360,7 @@ export class OpenAIProvider extends AIProvider {
   }
 
   async *stream(messages, options = {}) {
-    const targetModel = options.model || this.model;
+    const targetModel = this._resolveModel(options.model);
     const maxRetries = 2;
     let client = null;
 
@@ -424,12 +448,12 @@ export class OpenAIProvider extends AIProvider {
             },
           };
 
-          // Optimizing OpenRouter reasoning models to prevent gateway timeouts
+          // Optimize OpenRouter reasoning models to achieve sub-second TTFB
           if (
             activeModel.includes("nemotron") ||
             activeModel.includes("reasoning")
           ) {
-            createParams.reasoning = { effort: "low" };
+            createParams.reasoning = { effort: "none" };
           }
 
           const stream = await client.chat.completions.create(createParams, {
