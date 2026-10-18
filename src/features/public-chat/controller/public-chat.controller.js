@@ -107,7 +107,19 @@ export const createPublicChatController = ({
 
       const abortController = new AbortController();
 
+      const keepAliveInterval = setInterval(() => {
+        if (!res.writableEnded && res.writable) {
+          res.write(": ping\n\n");
+          if (res.flush) {
+            res.flush();
+          }
+        } else {
+          clearInterval(keepAliveInterval);
+        }
+      }, 4000);
+
       res.on("close", () => {
+        clearInterval(keepAliveInterval);
         if (!res.writableEnded) {
           abortController.abort();
         }
@@ -327,6 +339,7 @@ export const createPublicChatController = ({
           });
         }
       } finally {
+        clearInterval(keepAliveInterval);
         if (!res.writableEnded) {
           res.end();
         }
