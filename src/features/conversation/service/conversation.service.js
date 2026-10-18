@@ -1181,6 +1181,12 @@ export class ConversationService {
         toolCount: 0,
       });
     } else {
+      yield {
+        type: "status",
+        status: "searching_knowledge",
+        label: "Searching knowledge base",
+      };
+
       const ragStartedAt = Date.now();
 
       const ragResult = await this.buildRagSystemMessage({
@@ -1253,6 +1259,12 @@ export class ConversationService {
     };
 
     yield {
+      type: "status",
+      status: "thinking",
+      label: "Thinking",
+    };
+
+    yield {
       type: "sources",
       sources: ragSources,
     };
@@ -1269,6 +1281,12 @@ export class ConversationService {
 
       const ollamaStartedAt = Date.now();
       console.log("[ChatDebug] AI generation started");
+
+      yield {
+        type: "status",
+        status: "generating",
+        label: "Formulating response",
+      };
 
       try {
         for await (const event of aiProvider.stream(currentMessages, {
@@ -1365,6 +1383,17 @@ export class ConversationService {
           toolName,
         );
 
+        const cleanToolName = toolName
+          ? toolName.replace(/[_-]+/g, " ").trim()
+          : "tool";
+
+        yield {
+          type: "status",
+          status: "executing_tool",
+          toolName,
+          label: `Using ${cleanToolName}`,
+        };
+
         yield {
           type: "tool_call",
           toolName,
@@ -1395,6 +1424,12 @@ export class ConversationService {
           type: "tool_result",
           toolName,
           content: toolResult,
+        };
+
+        yield {
+          type: "status",
+          status: "generating",
+          label: "Formulating response",
         };
       }
 
@@ -2325,6 +2360,12 @@ export class ConversationService {
       agent,
     });
 
+    yield {
+      type: "status",
+      status: "thinking",
+      label: "Thinking",
+    };
+
     const conversationSetupMs = Date.now() - conversationSetupStartedAt;
 
     logStage("conversation_setup", conversationSetupStartedAt);
@@ -2382,6 +2423,14 @@ export class ConversationService {
       conversationId: conversation.id,
       isSimpleMessage,
     });
+
+    if (!isSimpleMessage && targetProjectId && this.knowledgeSearchService) {
+      yield {
+        type: "status",
+        status: "searching_knowledge",
+        label: "Searching knowledge base",
+      };
+    }
 
     const [history, context, preloadedKnowledgeResults, rawTools] =
       await Promise.all([
@@ -2577,6 +2626,12 @@ export class ConversationService {
       let streamedText = "";
 
       const ollamaStartedAt = Date.now();
+
+      yield {
+        type: "status",
+        status: "generating",
+        label: "Formulating response",
+      };
 
       try {
         for await (const event of aiProvider.stream(currentMessages, {
@@ -2825,6 +2880,17 @@ export class ConversationService {
           toolName,
         );
 
+        const cleanToolName = toolName
+          ? toolName.replace(/[_-]+/g, " ").trim()
+          : "tool";
+
+        yield {
+          type: "status",
+          status: "executing_tool",
+          toolName,
+          label: `Using ${cleanToolName}`,
+        };
+
         yield {
           type: "tool_call",
           toolName,
@@ -2855,6 +2921,12 @@ export class ConversationService {
           type: "tool_result",
           toolName,
           content: toolResult,
+        };
+
+        yield {
+          type: "status",
+          status: "generating",
+          label: "Formulating response",
         };
       }
 

@@ -94,6 +94,16 @@ export const streamChat = asyncHandler(async (req, res) => {
         continue;
       }
 
+      if (event.type === "status") {
+        writeEvent(res, "status", {
+          status: event.status,
+          label: event.label,
+          toolName: event.toolName,
+        });
+        if (res.flush) res.flush();
+        continue;
+      }
+
       if (event.type === "sources") {
         writeEvent(res, "sources", {
           sources: event.sources,

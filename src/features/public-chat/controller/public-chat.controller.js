@@ -189,6 +189,17 @@ export const createPublicChatController = ({
             continue;
           }
 
+          if (event.type === "status") {
+            writeEvent(res, "status", {
+              status: event.status,
+              label: event.label,
+              toolName: event.toolName,
+            });
+
+            if (res.flush) res.flush();
+            continue;
+          }
+
           if (event.type === "token") {
             writeEvent(res, "token", {
               content: event.content,
