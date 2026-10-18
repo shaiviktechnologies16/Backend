@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { Conversation } from "../entity/conversation.entity.js";
 import { Message } from "../../message/entity/message.entity.js";
 import { Usage } from "../../usage/entity/usage.entity.js";
@@ -14,6 +15,7 @@ import {
   appendSecurityGuardrailsToSystemPrompt,
 } from "../../../common/utils/prompt-guard.util.js";
 import { workspaceRealtimeEmitter } from "../../../common/utils/workspace-event-emitter.js";
+import { redisClient } from "../../../infrastructure/redis/redis.client.js";
 
 export class ConversationService {
   constructor({
@@ -1880,6 +1882,8 @@ export class ConversationService {
     let agent;
     let planUsage;
     let createdUserMessageId = null;
+    let existingAssistantMessage = null;
+    let createdAssistantMessage = null;
 
     const requestId = options?.requestId ?? "public-req";
 
@@ -2112,6 +2116,30 @@ export class ConversationService {
                 messageId: userMessage.id,
                 conversationId: conversation.id,
               });
+
+              // Check if an assistant response was already generated for this user message
+              const recentMsgs =
+                await this.messageRepository.findByConversationId(
+                  conversation.id,
+                  manager,
+                );
+              const userIdx = recentMsgs.findIndex(
+                (m) => m.id === userMessage.id,
+              );
+              if (userIdx !== -1 && userIdx < recentMsgs.length - 1) {
+                const nextMsg = recentMsgs[userIdx + 1];
+                if (nextMsg && nextMsg.role === MessageRole.ASSISTANT) {
+                  existingAssistantMessage = nextMsg;
+                  console.log(
+                    "[PublicChatDebug] ASSISTANT_MESSAGE_IDEMPOTENT_REUSE",
+                    {
+                      requestId,
+                      assistantMessageId: existingAssistantMessage.id,
+                      conversationId: conversation.id,
+                    },
+                  );
+                }
+              }
             }
           }
 
@@ -2173,6 +2201,27 @@ export class ConversationService {
       type: "conversation",
       conversationId: conversation.id,
     };
+
+    if (existingAssistantMessage) {
+      console.log("[PublicChatDebug] RETURNING_CACHED_IDEMPOTENT_RESPONSE", {
+        requestId,
+        assistantMessageId: existingAssistantMessage.id,
+        conversationId: conversation.id,
+      });
+
+      yield {
+        type: "token",
+        content: existingAssistantMessage.content,
+      };
+
+      yield {
+        type: "done",
+        conversationId: conversation.id,
+        messageId: existingAssistantMessage.id,
+      };
+
+      return;
+    }
 
     console.log("[PublicChatDebug] POST_TRANSACTION_START", {
       requestId,
@@ -2876,18 +2925,46 @@ export class ConversationService {
 
         await this.safeUpdateConversation(conversation, manager);
 
+        const UUID_REGEX =
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+        const rawAssistantId = options?.clientAssistantMessageId || null;
+        const assistantMessageId =
+          rawAssistantId && UUID_REGEX.test(rawAssistantId)
+            ? rawAssistantId
+            : crypto.randomUUID();
+
         const assistantMessage = new Message({
+          id: assistantMessageId,
           conversationId: conversation.id,
           role: MessageRole.ASSISTANT,
           content: reply,
         });
 
         await this.messageRepository.create(assistantMessage, manager);
+        createdAssistantMessage = assistantMessage;
       });
+
+      if (createdAssistantMessage) {
+        workspaceRealtimeEmitter.emit("conversation.message.created", {
+          conversationId: conversation.id,
+          projectId: conversation.projectId,
+          message: {
+            id: createdAssistantMessage.id,
+            role: createdAssistantMessage.role,
+            content: createdAssistantMessage.content,
+            createdAt:
+              createdAssistantMessage.createdAt || new Date().toISOString(),
+          },
+          updatedAt: conversation.updatedAt
+            ? conversation.updatedAt.toISOString()
+            : new Date().toISOString(),
+        });
+      }
 
       console.log("[PublicChatDebug] ASSISTANT_MESSAGE_SAVE_SUCCESS", {
         requestId,
         conversationId: conversation.id,
+        messageId: createdAssistantMessage?.id,
       });
     } catch (saveErr) {
       console.error("[PublicChatDebug] ASSISTANT_MESSAGE_SAVE_FAILED", {
@@ -2988,6 +3065,8 @@ export class ConversationService {
 
     yield {
       type: "done",
+      conversationId: conversation.id,
+      messageId: createdAssistantMessage?.id || null,
     };
   }
 

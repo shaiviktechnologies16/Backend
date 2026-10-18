@@ -66,6 +66,8 @@ import { createAiVideoModule } from "../features/ai-video/di.js";
 import { ModelCostCalculatorService } from "../features/usage/application/services/model-cost-calculator.service.js";
 import { BudgetCapGuardService } from "../features/usage/application/services/budget-cap-guard.service.js";
 import { GetTokenUsageAnalyticsUseCase } from "../features/usage/application/use-cases/get-token-usage-analytics.usecase.js";
+import { DailyConversationClosureService } from "../features/conversation/service/daily-conversation-closure.service.js";
+import { DailyClosureScheduler } from "../infrastructure/scheduler/daily-closure.scheduler.js";
 
 const promptBuilder = new PromptBuilder();
 export const jwtService = new JwtService();
@@ -499,6 +501,15 @@ const aiVideoModule = createAiVideoModule({
   checkPlanUsageUseCase: planModule.checkPlanUsageUseCase,
   storageProvider: uploadModule.storageProvider,
   uploadFileUseCase: uploadModule.uploadFileUseCase,
+});
+
+export const dailyConversationClosureService =
+  new DailyConversationClosureService({
+    conversationRepository,
+  });
+
+export const dailyClosureScheduler = new DailyClosureScheduler({
+  dailyConversationClosureService,
 });
 
 export {

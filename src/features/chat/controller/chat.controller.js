@@ -369,3 +369,32 @@ export const streamWorkspaceEvents = asyncHandler(async (req, res) => {
     );
   });
 });
+
+export const runDailyClosure = asyncHandler(async (req, res) => {
+  const { force, dryRun } = req.body || {};
+  const { dailyConversationClosureService } = await import(
+    "../../../container/services.js"
+  );
+  const result = await dailyConversationClosureService.runDailyClosure({
+    force: Boolean(force),
+    dryRun: Boolean(dryRun),
+  });
+
+  res.status(200).json({
+    success: true,
+    data: result,
+  });
+});
+
+export const getDailyClosureStatus = asyncHandler(async (req, res) => {
+  const { dailyConversationClosureService } = await import(
+    "../../../container/services.js"
+  );
+  const status = await dailyConversationClosureService.getStatus();
+
+  res.status(200).json({
+    success: true,
+    data: status,
+  });
+});
+

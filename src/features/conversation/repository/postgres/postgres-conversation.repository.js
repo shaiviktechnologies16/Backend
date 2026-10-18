@@ -243,4 +243,58 @@ export class PostgresConversationRepository extends ConversationRepository {
       id,
     });
   }
+
+  async findEligibleForDailyClosure({
+    beforeDate,
+    excludeHumanActive = true,
+    limit = 100,
+    manager = null,
+  }) {
+    const repository = this.getRepository(manager);
+    const qb = repository
+      .createQueryBuilder("conversation")
+      .where("conversation.isCompleted = :isCompleted", { isCompleted: false })
+      .andWhere("conversation.updatedAt < :beforeDate", { beforeDate });
+
+    if (excludeHumanActive) {
+      qb.andWhere("conversation.isHandover = :isHandover", {
+        isHandover: false,
+      });
+    }
+
+    qb.orderBy("conversation.updatedAt", "ASC").take(limit);
+
+    const entities = await qb.getMany();
+    return entities.map((entity) => this.toDomain(entity));
+  }
+
+  async countEligibleForDailyClosure({
+    beforeDate,
+    excludeHumanActive = true,
+    manager = null,
+  }) {
+    const repository = this.getRepository(manager);
+    const qb = repository
+      .createQueryBuilder("conversation")
+      .where("conversation.isCompleted = :isCompleted", { isCompleted: false })
+      .andWhere("conversation.updatedAt < :beforeDate", { beforeDate });
+
+    if (excludeHumanActive) {
+      qb.andWhere("conversation.isHandover = :isHandover", {
+        isHandover: false,
+      });
+    }
+
+    return qb.getCount();
+  }
+
+  async countHumanActiveBeforeDate({ beforeDate, manager = null }) {
+    const repository = this.getRepository(manager);
+    return repository
+      .createQueryBuilder("conversation")
+      .where("conversation.isCompleted = :isCompleted", { isCompleted: false })
+      .andWhere("conversation.isHandover = :isHandover", { isHandover: true })
+      .andWhere("conversation.updatedAt < :beforeDate", { beforeDate })
+      .getCount();
+  }
 }

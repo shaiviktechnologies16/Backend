@@ -86,7 +86,12 @@ export const createPublicChatController = ({
         .substring(0, 12);
       req.requestId = requestId;
 
-      const { message, conversationId, clientMessageId } = req.body;
+      const {
+        message,
+        conversationId,
+        clientMessageId,
+        clientAssistantMessageId,
+      } = req.body;
 
       if (!message || typeof message !== "string") {
         throw new ValidationError("Message is required.");
@@ -146,6 +151,7 @@ export const createPublicChatController = ({
               signal: abortController.signal,
               requestId,
               clientMessageId: clientMessageId || null,
+              clientAssistantMessageId: clientAssistantMessageId || null,
             },
           });
         } else {
@@ -160,6 +166,7 @@ export const createPublicChatController = ({
               signal: abortController.signal,
               requestId,
               clientMessageId: clientMessageId || null,
+              clientAssistantMessageId: clientAssistantMessageId || null,
             },
           );
         }
@@ -229,7 +236,10 @@ export const createPublicChatController = ({
           }
 
           if (event.type === "done") {
-            writeEvent(res, "done", {});
+            writeEvent(res, "done", {
+              conversationId: event.conversationId,
+              messageId: event.messageId,
+            });
 
             if (res.flush) res.flush();
             continue;

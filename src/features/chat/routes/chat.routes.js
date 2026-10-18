@@ -13,6 +13,8 @@ import {
   completeConversation,
   setAgentTyping,
   streamWorkspaceEvents,
+  runDailyClosure,
+  getDailyClosureStatus,
 } from "../controller/chat.controller.js";
 
 export default function createChatRoutes({ middleware }) {
@@ -23,6 +25,9 @@ export default function createChatRoutes({ middleware }) {
   router.post("/", chat);
   router.post("/stream", streamChat);
   router.get("/stream/events", streamWorkspaceEvents);
+
+  router.post("/conversations/daily-closure/run", runDailyClosure);
+  router.get("/conversations/daily-closure/status", getDailyClosureStatus);
 
   router.get("/conversations", getConversations);
   router.get("/conversations/:conversationId", getConversation);

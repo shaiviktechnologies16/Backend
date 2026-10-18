@@ -4,6 +4,7 @@ import app from "./app.js";
 import { appConfig } from "./config/index.js";
 import { AppDataSource } from "./database/datasource.js";
 import { connectRedis } from "./infrastructure/redis/redis.client.js";
+import { dailyClosureScheduler } from "./container/services.js";
 
 const { port, name, version } = appConfig;
 
@@ -31,6 +32,11 @@ async function bootstrap() {
 
     app.listen(port, "0.0.0.0", () => {
       console.log(`${name} v${version} is running on port ${port}`);
+      try {
+        dailyClosureScheduler.start();
+      } catch (schedErr) {
+        console.warn("⚠️ Failed to start daily closure scheduler:", schedErr?.message || schedErr);
+      }
     });
   } catch (error) {
     console.error("❌ Failed to start application");
