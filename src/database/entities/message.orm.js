@@ -20,9 +20,10 @@ export const MessageOrm = new EntitySchema({
 
     createdAt: {
       name: "created_at",
-      type: "timestamp",
+      type: "timestamptz",
       createDate: true,
     },
+
   },
 
   relations: {

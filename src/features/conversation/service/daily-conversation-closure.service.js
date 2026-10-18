@@ -210,7 +210,10 @@ export class DailyConversationClosureService {
           isHandover: false,
           isCompleted: true,
           completedAt: closedConv.completedAt
-            ? closedConv.completedAt.toISOString()
+            ? (closedConv.completedAt instanceof Date ? closedConv.completedAt.toISOString() : new Date(closedConv.completedAt).toISOString())
+            : new Date().toISOString(),
+          updatedAt: closedConv.updatedAt
+            ? (closedConv.updatedAt instanceof Date ? closedConv.updatedAt.toISOString() : new Date(closedConv.updatedAt).toISOString())
             : new Date().toISOString(),
           completedBy: "SYSTEM_DAILY_CLOSURE",
         });

@@ -49,7 +49,7 @@ export const ConversationOrm = new EntitySchema({
 
     handoverRequestedAt: {
       name: "handover_requested_at",
-      type: "timestamp",
+      type: "timestamptz",
       nullable: true,
     },
 
@@ -61,7 +61,7 @@ export const ConversationOrm = new EntitySchema({
 
     completedAt: {
       name: "completed_at",
-      type: "timestamp",
+      type: "timestamptz",
       nullable: true,
     },
 
@@ -73,15 +73,16 @@ export const ConversationOrm = new EntitySchema({
 
     createdAt: {
       name: "created_at",
-      type: "timestamp",
+      type: "timestamptz",
       createDate: true,
     },
 
     updatedAt: {
       name: "updated_at",
-      type: "timestamp",
+      type: "timestamptz",
       updateDate: true,
     },
+
   },
 
   relations: {

@@ -2,8 +2,22 @@ import path from "path";
 import { fileURLToPath } from "url";
 import "reflect-metadata";
 import fs from "fs";
+import pg from "pg";
 import envConfig from "../config/env.config.js";
 import { DataSource } from "typeorm";
+
+// Ensure node-postgres binds JavaScript Date objects as UTC
+pg.defaults.parseInputDatesAsUTC = true;
+
+// Ensure TIMESTAMP WITHOUT TIME ZONE (OID 1114) values are parsed as UTC
+pg.types.setTypeParser(1114, (stringValue) => {
+  if (!stringValue) return null;
+  const isoUtc = stringValue.includes("T")
+    ? (stringValue.endsWith("Z") ? stringValue : stringValue + "Z")
+    : stringValue.replace(" ", "T") + "Z";
+  return new Date(isoUtc);
+});
+
 import { UserOrm } from "./entities/user.orm.js";
 import { RoleOrm } from "./entities/role.orm.js";
 import { PermissionOrm } from "./entities/permission.orm.js";
