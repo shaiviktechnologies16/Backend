@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { AppError } from "../../../../common/errors/AppError.js";
 import {
   isBot,
@@ -5,6 +6,8 @@ import {
   parseBrowser,
   parseOperatingSystem,
   parseReferrerSource,
+  parseUtmParameters,
+  classifyAcquisitionChannel,
 } from "../utils/analytics-parser.util.js";
 
 export class RecordVisitorEventUseCase {
@@ -25,13 +28,20 @@ export class RecordVisitorEventUseCase {
     userAgent = "",
     clientIp = null,
   }) {
-    if (!trackingKey || typeof trackingKey !== "string") {
+    const cleanKey =
+      typeof trackingKey === "string"
+        ? trackingKey.trim()
+        : trackingKey
+          ? String(trackingKey).trim()
+          : "";
+
+    if (!cleanKey) {
       throw new AppError("Invalid or missing tracking key.", 400, "INVALID_TRACKING_KEY");
     }
 
     // 1. Validate project config
     const config =
-      await this.projectAnalyticsRepository.findConfigByTrackingKey(trackingKey);
+      await this.projectAnalyticsRepository.findConfigByTrackingKey(cleanKey);
 
     if (!config) {
       throw new AppError("Tracking configuration not found.", 404, "TRACKING_CONFIG_NOT_FOUND");
@@ -61,13 +71,15 @@ export class RecordVisitorEventUseCase {
       }
     }
 
-    // 4. Sanitize inputs
-    const cleanVisitorId = String(visitorId || "").trim().slice(0, 128);
-    const cleanSessionId = String(sessionId || "").trim().slice(0, 128);
-
-    if (!cleanVisitorId || !cleanSessionId) {
-      throw new AppError("Visitor ID and Session ID are required.", 400, "MISSING_ANALYTICS_IDENTITY");
-    }
+    // 4. Sanitize inputs (or generate fallback anonymous IDs if omitted)
+    const cleanVisitorId =
+      visitorId && String(visitorId).trim()
+        ? String(visitorId).trim().slice(0, 128)
+        : `vid_${crypto.randomUUID()}`;
+    const cleanSessionId =
+      sessionId && String(sessionId).trim()
+        ? String(sessionId).trim().slice(0, 128)
+        : `sid_${crypto.randomUUID()}`;
 
     // Strip sensitive parameters from page path (passwords, tokens, keys)
     let sanitizedPath = String(pagePath || "/").trim().slice(0, 1024);
@@ -85,14 +97,44 @@ export class RecordVisitorEventUseCase {
       // Keep sanitizedPath as is
     }
 
-    // Categorize environment
+    // Deduplicate identical pageview events sent within 3 seconds for the same session and page
+    if (eventType === "pageview" && this.projectAnalyticsRepository.isRecentDuplicateEvent) {
+      const isDup = await this.projectAnalyticsRepository.isRecentDuplicateEvent({
+        projectId: config.projectId,
+        sessionId: cleanSessionId,
+        pagePath: sanitizedPath,
+      });
+      if (isDup) {
+        return { recorded: true, deduplicated: true };
+      }
+    }
+
+    // Categorize environment & parse UTM traffic attribution
     const deviceCategory = parseDeviceCategory(userAgent);
     const browser = parseBrowser(userAgent);
     const os = parseOperatingSystem(userAgent);
+    const utmParams = parseUtmParameters(pagePath);
     const referrerSource = parseReferrerSource(referrer);
+    const acquisitionChannel = classifyAcquisitionChannel({
+      referrer,
+      pagePath,
+      utmParams,
+    });
 
     const sanitizedTitle = pageTitle ? String(pageTitle).slice(0, 512) : null;
     const sanitizedReferrer = referrer ? String(referrer).slice(0, 1024) : null;
+
+    const cleanMetadata = {
+      ...(typeof metadata === "object" && metadata !== null ? metadata : {}),
+      acquisition_channel: acquisitionChannel,
+      ...(utmParams.utm_source ? { utm_source: utmParams.utm_source } : {}),
+      ...(utmParams.utm_medium ? { utm_medium: utmParams.utm_medium } : {}),
+      ...(utmParams.utm_campaign ? { utm_campaign: utmParams.utm_campaign } : {}),
+      ...(utmParams.utm_term ? { utm_term: utmParams.utm_term } : {}),
+      ...(utmParams.utm_content ? { utm_content: utmParams.utm_content } : {}),
+      ...(utmParams.gclid ? { gclid: utmParams.gclid } : {}),
+      ...(utmParams.fbclid ? { fbclid: utmParams.fbclid } : {}),
+    };
 
     // 5. Record event in database
     const event = await this.projectAnalyticsRepository.recordEvent({
@@ -109,7 +151,7 @@ export class RecordVisitorEventUseCase {
       browser,
       os,
       durationSeconds: Math.max(0, parseInt(durationSeconds, 10) || 0),
-      metadata: typeof metadata === "object" && metadata !== null ? metadata : {},
+      metadata: cleanMetadata,
     });
 
     return {

@@ -32,7 +32,11 @@ export class TtsJobProcessor {
         },
       });
 
-      console.log("TTS RESULT:", result);
+      console.log("TTS RESULT:", {
+        filename: result?.filename,
+        outputPath: result?.outputPath,
+        format: result?.format,
+      });
 
       await this.ttsJobRepository.updateProgress(jobId, 1, 1);
 

@@ -10,18 +10,36 @@ const sanitizeHtmlInputString = (inputStringValue) => {
     .replace(/javascript\s*:\s*/gi, "");
 };
 
-const sanitizeObjectStructureRecursively = (targetStructure) => {
+const sanitizeObjectStructureRecursively = (targetStructure, key = null) => {
   if (targetStructure === null || targetStructure === undefined) {
     return targetStructure;
   }
 
+  // Preserve base64 binary audio payloads without HTML regex replacement
+  if (
+    key === "reference_audio_base64" ||
+    key === "referenceAudioBase64" ||
+    key === "referenceAudio" ||
+    key === "audio_base64" ||
+    key === "audioBase64"
+  ) {
+    return targetStructure;
+  }
+
   if (typeof targetStructure === "string") {
+    // Skip regex replacements on audio data URIs or large base64 strings to prevent corruption and high CPU
+    if (
+      targetStructure.startsWith("data:audio/") ||
+      (targetStructure.length > 32768 && !targetStructure.includes("<"))
+    ) {
+      return targetStructure;
+    }
     return sanitizeHtmlInputString(targetStructure);
   }
 
   if (Array.isArray(targetStructure)) {
     return targetStructure.map((arrayElementItem) =>
-      sanitizeObjectStructureRecursively(arrayElementItem),
+      sanitizeObjectStructureRecursively(arrayElementItem, key),
     );
   }
 
@@ -30,7 +48,10 @@ const sanitizeObjectStructureRecursively = (targetStructure) => {
 
     for (const objectPropertyKey of Object.keys(targetStructure)) {
       sanitizedObjectResult[objectPropertyKey] =
-        sanitizeObjectStructureRecursively(targetStructure[objectPropertyKey]);
+        sanitizeObjectStructureRecursively(
+          targetStructure[objectPropertyKey],
+          objectPropertyKey,
+        );
     }
 
     return sanitizedObjectResult;

@@ -9,6 +9,10 @@ export class ProjectAnalyticsController {
     getProjectTrackingConfigUseCase,
     updateProjectTrackingConfigUseCase,
     rotateProjectTrackingKeyUseCase,
+    getProjectAnalyticsVisitorsUseCase,
+    getProjectVisitorDetailsUseCase,
+    getProjectAnalyticsLandingPagesUseCase,
+    getProjectAnalyticsCampaignsUseCase,
   }) {
     this.getProjectAnalyticsOverviewUseCase =
       getProjectAnalyticsOverviewUseCase;
@@ -21,6 +25,12 @@ export class ProjectAnalyticsController {
     this.updateProjectTrackingConfigUseCase =
       updateProjectTrackingConfigUseCase;
     this.rotateProjectTrackingKeyUseCase = rotateProjectTrackingKeyUseCase;
+    this.getProjectAnalyticsVisitorsUseCase = getProjectAnalyticsVisitorsUseCase;
+    this.getProjectVisitorDetailsUseCase = getProjectVisitorDetailsUseCase;
+    this.getProjectAnalyticsLandingPagesUseCase =
+      getProjectAnalyticsLandingPagesUseCase;
+    this.getProjectAnalyticsCampaignsUseCase =
+      getProjectAnalyticsCampaignsUseCase;
   }
 
   getOverview = async (req, res, next) => {
@@ -177,12 +187,13 @@ export class ProjectAnalyticsController {
   updateConfig = async (req, res, next) => {
     try {
       const projectId = req.params.projectId;
-      const { isEnabled, allowedDomains } = req.body;
+      const { isEnabled, allowedDomains, trackingKey } = req.body;
 
       const result = await this.updateProjectTrackingConfigUseCase.execute({
         projectId,
         isEnabled,
         allowedDomains,
+        trackingKey,
       });
 
       res.json({
@@ -206,6 +217,93 @@ export class ProjectAnalyticsController {
       res.json({
         success: true,
         message: "Tracking key rotated successfully.",
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getLandingPages = async (req, res, next) => {
+    try {
+      const projectId = req.params.projectId;
+      const { from, to, period, limit } = req.query;
+
+      const result =
+        await this.getProjectAnalyticsLandingPagesUseCase.execute({
+          projectId,
+          from,
+          to,
+          period,
+          limit: limit ? Number(limit) : 10,
+        });
+
+      res.json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getCampaigns = async (req, res, next) => {
+    try {
+      const projectId = req.params.projectId;
+      const { from, to, period, limit } = req.query;
+
+      const result = await this.getProjectAnalyticsCampaignsUseCase.execute({
+        projectId,
+        from,
+        to,
+        period,
+        limit: limit ? Number(limit) : 10,
+      });
+
+      res.json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getVisitors = async (req, res, next) => {
+    try {
+      const projectId = req.params.projectId;
+      const { from, to, period, page, limit, search } = req.query;
+
+      const result = await this.getProjectAnalyticsVisitorsUseCase.execute({
+        projectId,
+        from,
+        to,
+        period,
+        page: page ? Number(page) : 1,
+        limit: limit ? Number(limit) : 20,
+        search,
+      });
+
+      res.json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  getVisitorDetails = async (req, res, next) => {
+    try {
+      const { projectId, visitorId } = req.params;
+
+      const result = await this.getProjectVisitorDetailsUseCase.execute({
+        projectId,
+        visitorId,
+      });
+
+      res.json({
+        success: true,
         data: result,
       });
     } catch (error) {

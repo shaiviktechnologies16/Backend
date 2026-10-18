@@ -9,7 +9,7 @@ import { GetTtsJobUseCase } from "./domain/use-cases/get-tts-job.use-case.js";
 
 import { TtsJobProcessor } from "./service/tts-job.processor.js";
 
-export function createTTSModule({ synthesizeSpeechUseCase }) {
+export function createTTSModule({ synthesizeSpeechUseCase, ttsProviderFactory }) {
   if (!synthesizeSpeechUseCase) {
     throw new Error("TTS module requires synthesizeSpeechUseCase.");
   }
@@ -40,6 +40,7 @@ export function createTTSModule({ synthesizeSpeechUseCase }) {
     getTtsJobUseCase,
     ttsJobRepository,
     ttsJobProcessor,
+    ttsProviderFactory: ttsProviderFactory || synthesizeSpeechUseCase.ttsProviderFactory,
   });
 
   return {

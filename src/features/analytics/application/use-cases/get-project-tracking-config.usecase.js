@@ -32,7 +32,7 @@ export class GetProjectTrackingConfigUseCase {
     const apiHost =
       process.env.BACKEND_PUBLIC_URL ||
       process.env.BACKEND_URL ||
-      "https://api.shaiviktechnologies.in";
+      "https://shaivik-ai.onrender.com";
 
     const snippet = `<script
   defer

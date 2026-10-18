@@ -78,6 +78,39 @@ export function parseOperatingSystem(userAgent = "") {
   return "Other";
 }
 
+export function parseUtmParameters(pagePath = "") {
+  const result = {
+    utm_source: null,
+    utm_medium: null,
+    utm_campaign: null,
+    utm_term: null,
+    utm_content: null,
+    gclid: null,
+    fbclid: null,
+  };
+
+  if (!pagePath || typeof pagePath !== "string" || !pagePath.includes("?")) {
+    return result;
+  }
+
+  try {
+    const dummyUrl = new URL(pagePath, "https://internal.shaivik.ai");
+    const params = dummyUrl.searchParams;
+
+    if (params.get("utm_source")) result.utm_source = params.get("utm_source").slice(0, 128);
+    if (params.get("utm_medium")) result.utm_medium = params.get("utm_medium").slice(0, 128);
+    if (params.get("utm_campaign")) result.utm_campaign = params.get("utm_campaign").slice(0, 128);
+    if (params.get("utm_term")) result.utm_term = params.get("utm_term").slice(0, 128);
+    if (params.get("utm_content")) result.utm_content = params.get("utm_content").slice(0, 128);
+    if (params.get("gclid")) result.gclid = params.get("gclid").slice(0, 128);
+    if (params.get("fbclid")) result.fbclid = params.get("fbclid").slice(0, 128);
+  } catch {
+    // Ignore URL parse error
+  }
+
+  return result;
+}
+
 export function parseReferrerSource(referrer = "", currentHost = "") {
   if (!referrer || typeof referrer !== "string" || !referrer.trim()) {
     return "Direct";
@@ -110,5 +143,51 @@ export function parseReferrerSource(referrer = "", currentHost = "") {
   } catch {
     return "Referral";
   }
+}
+
+export function classifyAcquisitionChannel({ referrer = "", pagePath = "", utmParams = null }) {
+  const utm = utmParams || parseUtmParameters(pagePath);
+  const medium = (utm.utm_medium || "").toLowerCase().trim();
+
+  // Paid Search detection
+  if (
+    utm.gclid ||
+    ["cpc", "ppc", "paid", "paidsearch", "ad", "paid-search"].includes(medium)
+  ) {
+    return "Paid Search";
+  }
+
+  // Social detection
+  if (
+    ["social", "paid-social", "social-network", "sm"].includes(medium) ||
+    utm.fbclid
+  ) {
+    return "Social";
+  }
+
+  // Email detection
+  if (["email", "newsletter", "edm"].includes(medium)) {
+    return "Email";
+  }
+
+  // Check referrer domain
+  const source = parseReferrerSource(referrer);
+
+  if (["Google", "Bing", "Yahoo", "DuckDuckGo"].includes(source)) {
+    return "Organic Search";
+  }
+
+  if (["Twitter / X", "LinkedIn", "Facebook", "Instagram", "YouTube", "Reddit"].includes(source)) {
+    return "Social";
+  }
+
+  if (source === "Direct") {
+    if (utm.utm_source) {
+      return utm.utm_source;
+    }
+    return "Direct";
+  }
+
+  return "Referral";
 }
 

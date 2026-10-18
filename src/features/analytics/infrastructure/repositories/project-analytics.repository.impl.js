@@ -38,8 +38,13 @@ export class ProjectAnalyticsRepositoryImpl extends ProjectAnalyticsRepository {
 
   async findConfigByTrackingKey(trackingKey) {
     if (!trackingKey) return null;
+    const cleanKey =
+      typeof trackingKey === "string"
+        ? trackingKey.trim()
+        : String(trackingKey).trim();
+    if (!cleanKey) return null;
 
-    const cached = this.configCache.get(trackingKey);
+    const cached = this.configCache.get(cleanKey);
     if (cached && Date.now() - cached.timestamp < this.configCacheTtlMs) {
       return cached.config;
     }
@@ -58,16 +63,16 @@ export class ProjectAnalyticsRepositoryImpl extends ProjectAnalyticsRepository {
         p.status AS "projectStatus"
       FROM project_analytics_configs c
       INNER JOIN projects p ON p.id = c.project_id
-      WHERE c.tracking_key = $1
+      WHERE (TRIM(c.tracking_key) = $1 OR c.project_id::text = $1)
         AND p.deleted_at IS NULL
       LIMIT 1
     `,
-      [trackingKey],
+      [cleanKey],
     );
 
     const config = records[0] || null;
     if (config) {
-      this.configCache.set(trackingKey, {
+      this.configCache.set(cleanKey, {
         config,
         timestamp: Date.now(),
       });
@@ -96,7 +101,12 @@ export class ProjectAnalyticsRepositoryImpl extends ProjectAnalyticsRepository {
       )
       VALUES ($1, $2, $3, $4, true)
       ON CONFLICT (project_id) DO UPDATE
-      SET updated_at = CURRENT_TIMESTAMP
+      SET tracking_key = COALESCE(EXCLUDED.tracking_key, project_analytics_configs.tracking_key),
+          allowed_domains = CASE 
+            WHEN array_length(EXCLUDED.allowed_domains, 1) > 0 THEN EXCLUDED.allowed_domains 
+            ELSE project_analytics_configs.allowed_domains 
+          END,
+          updated_at = CURRENT_TIMESTAMP
       RETURNING
         id,
         project_id AS "projectId",
@@ -110,11 +120,11 @@ export class ProjectAnalyticsRepositoryImpl extends ProjectAnalyticsRepository {
       [projectId, organizationId, key, allowedDomains],
     );
 
-    this.configCache.delete(key);
+    this.configCache.clear();
     return records[0];
   }
 
-  async updateConfig(projectId, { isEnabled, allowedDomains }) {
+  async updateConfig(projectId, { isEnabled, allowedDomains, trackingKey }) {
     const manager = this.dataSource.manager;
     const fields = [];
     const values = [projectId];
@@ -128,6 +138,11 @@ export class ProjectAnalyticsRepositoryImpl extends ProjectAnalyticsRepository {
     if (Array.isArray(allowedDomains)) {
       fields.push(`allowed_domains = $${idx++}`);
       values.push(allowedDomains);
+    }
+
+    if (trackingKey && typeof trackingKey === "string") {
+      fields.push(`tracking_key = $${idx++}`);
+      values.push(trackingKey.trim());
     }
 
     fields.push("updated_at = CURRENT_TIMESTAMP");
@@ -150,10 +165,7 @@ export class ProjectAnalyticsRepositoryImpl extends ProjectAnalyticsRepository {
       values,
     );
 
-    if (records[0]?.trackingKey) {
-      this.configCache.delete(records[0].trackingKey);
-    }
-
+    this.configCache.clear();
     return records[0] || null;
   }
 
@@ -273,15 +285,19 @@ export class ProjectAnalyticsRepositoryImpl extends ProjectAnalyticsRepository {
     // Current period metrics
     const [currentMetrics] = await manager.query(
       `
+      WITH session_durations AS (
+        SELECT session_id, COALESCE(MAX(duration_seconds), 0) AS dur
+        FROM project_visitor_events
+        WHERE project_id = $1
+          AND created_at >= $2
+          AND created_at <= $3
+        GROUP BY session_id
+      )
       SELECT
-        COUNT(DISTINCT visitor_id)::int AS "uniqueVisitors",
-        COUNT(DISTINCT session_id)::int AS "sessions",
-        COUNT(*)::int AS "pageViews",
-        COALESCE(AVG(duration_seconds), 0)::int AS "avgDurationSeconds"
-      FROM project_visitor_events
-      WHERE project_id = $1
-        AND created_at >= $2
-        AND created_at <= $3
+        (SELECT COUNT(DISTINCT visitor_id)::int FROM project_visitor_events WHERE project_id = $1 AND created_at >= $2 AND created_at <= $3) AS "uniqueVisitors",
+        (SELECT COUNT(DISTINCT session_id)::int FROM project_visitor_events WHERE project_id = $1 AND created_at >= $2 AND created_at <= $3) AS "sessions",
+        (SELECT COUNT(*)::int FROM project_visitor_events WHERE project_id = $1 AND created_at >= $2 AND created_at <= $3 AND event_type = 'pageview') AS "pageViews",
+        COALESCE((SELECT AVG(dur)::int FROM session_durations), 0) AS "avgDurationSeconds"
     `,
       [projectId, from, to],
     );
@@ -639,6 +655,268 @@ export class ProjectAnalyticsRepositoryImpl extends ProjectAnalyticsRepository {
         conversations: t.conversations,
         messages: t.messages,
       })),
+    };
+  }
+
+  async isRecentDuplicateEvent({ projectId, sessionId, pagePath }) {
+    const manager = this.dataSource.manager;
+    const res = await manager.query(
+      `
+      SELECT 1 FROM project_visitor_events
+      WHERE project_id = $1
+        AND session_id = $2
+        AND page_path = $3
+        AND event_type = 'pageview'
+        AND created_at >= NOW() - INTERVAL '3 seconds'
+      LIMIT 1
+    `,
+      [projectId, sessionId, pagePath],
+    );
+    return res.length > 0;
+  }
+
+  async getLandingPages(projectId, { from, to, limit = 10 }) {
+    const manager = this.dataSource.manager;
+    const rows = await manager.query(
+      `
+      WITH session_landings AS (
+        SELECT DISTINCT ON (session_id)
+          session_id,
+          page_path,
+          COALESCE(page_title, page_path) AS page_title,
+          created_at
+        FROM project_visitor_events
+        WHERE project_id = $1
+          AND created_at >= $2
+          AND created_at <= $3
+        ORDER BY session_id, created_at ASC
+      ),
+      session_stats AS (
+        SELECT
+          session_id,
+          COUNT(*) AS event_count,
+          COALESCE(MAX(duration_seconds), 0) AS duration
+        FROM project_visitor_events
+        WHERE project_id = $1
+          AND created_at >= $2
+          AND created_at <= $3
+        GROUP BY session_id
+      )
+      SELECT
+        sl.page_path AS "path",
+        sl.page_title AS "title",
+        COUNT(sl.session_id)::int AS "sessions",
+        COUNT(sl.session_id) FILTER (WHERE ss.event_count = 1)::int AS "bounces",
+        ROUND((COUNT(sl.session_id) FILTER (WHERE ss.event_count = 1)::numeric / NULLIF(COUNT(sl.session_id), 0)) * 100)::int AS "bounceRate",
+        COALESCE(AVG(ss.duration), 0)::int AS "avgDurationSeconds"
+      FROM session_landings sl
+      JOIN session_stats ss ON sl.session_id = ss.session_id
+      GROUP BY sl.page_path, sl.page_title
+      ORDER BY "sessions" DESC
+      LIMIT $4
+    `,
+      [projectId, from, to, Math.min(50, Math.max(1, limit))],
+    );
+    return rows;
+  }
+
+  async getCampaigns(projectId, { from, to, limit = 10 }) {
+    const manager = this.dataSource.manager;
+    const rows = await manager.query(
+      `
+      SELECT
+        COALESCE(metadata->>'utm_campaign', 'None') AS "campaign",
+        COALESCE(metadata->>'utm_source', referrer_source, 'Direct') AS "source",
+        COALESCE(metadata->>'utm_medium', 'Direct') AS "medium",
+        COUNT(DISTINCT visitor_id)::int AS "visitors",
+        COUNT(DISTINCT session_id)::int AS "sessions",
+        COUNT(*)::int AS "views"
+      FROM project_visitor_events
+      WHERE project_id = $1
+        AND created_at >= $2
+        AND created_at <= $3
+      GROUP BY 1, 2, 3
+      ORDER BY "views" DESC
+      LIMIT $4
+    `,
+      [projectId, from, to, Math.min(50, Math.max(1, limit))],
+    );
+    return rows;
+  }
+
+  async getVisitors(projectId, { from, to, page = 1, limit = 20, search = "" }) {
+    const manager = this.dataSource.manager;
+    const parsedPage = Math.max(1, parseInt(page, 10) || 1);
+    const parsedLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+    const offset = (parsedPage - 1) * parsedLimit;
+
+    const searchCondition =
+      search && typeof search === "string" && search.trim()
+        ? `AND (visitor_id ILIKE $4 OR referrer_source ILIKE $4 OR page_path ILIKE $4)`
+        : "";
+
+    const queryParams = [projectId, from, to];
+    if (searchCondition) {
+      queryParams.push(`%${search.trim()}%`);
+    }
+
+    const [countRes] = await manager.query(
+      `
+      SELECT COUNT(DISTINCT visitor_id)::int AS total
+      FROM project_visitor_events
+      WHERE project_id = $1
+        AND created_at >= $2
+        AND created_at <= $3
+        ${searchCondition}
+    `,
+      queryParams,
+    );
+
+    const total = countRes?.total || 0;
+    const totalPages = Math.ceil(total / parsedLimit);
+
+    const paginationParams = [...queryParams, parsedLimit, offset];
+    const limitIdx = queryParams.length + 1;
+    const offsetIdx = queryParams.length + 2;
+
+    const rows = await manager.query(
+      `
+      WITH visitor_metrics AS (
+        SELECT
+          visitor_id,
+          MIN(created_at) AS first_seen_at,
+          MAX(created_at) AS last_seen_at,
+          COUNT(DISTINCT session_id)::int AS total_sessions,
+          COUNT(*) FILTER (WHERE event_type = 'pageview')::int AS total_page_views
+        FROM project_visitor_events
+        WHERE project_id = $1
+          AND created_at >= $2
+          AND created_at <= $3
+          ${searchCondition}
+        GROUP BY visitor_id
+      ),
+      first_visits AS (
+        SELECT DISTINCT ON (visitor_id)
+          visitor_id,
+          page_path AS first_landing_page,
+          COALESCE(referrer_source, 'Direct') AS original_source,
+          metadata->>'utm_campaign' AS original_campaign
+        FROM project_visitor_events
+        WHERE project_id = $1
+        ORDER BY visitor_id, created_at ASC
+      )
+      SELECT
+        vm.visitor_id AS "visitorId",
+        vm.first_seen_at AS "firstSeenAt",
+        vm.last_seen_at AS "lastSeenAt",
+        vm.total_sessions AS "totalSessions",
+        vm.total_page_views AS "totalPageViews",
+        fv.first_landing_page AS "firstLandingPage",
+        fv.original_source AS "originalSource",
+        fv.original_campaign AS "originalCampaign"
+      FROM visitor_metrics vm
+      JOIN first_visits fv ON vm.visitor_id = fv.visitor_id
+      ORDER BY vm.last_seen_at DESC
+      LIMIT $${limitIdx} OFFSET $${offsetIdx}
+    `,
+      paginationParams,
+    );
+
+    return {
+      visitors: rows,
+      pagination: {
+        page: parsedPage,
+        limit: parsedLimit,
+        total,
+        totalPages,
+      },
+    };
+  }
+
+  async getVisitorDetails(projectId, visitorId) {
+    const manager = this.dataSource.manager;
+
+    const [visitorSummary] = await manager.query(
+      `
+      SELECT
+        visitor_id AS "visitorId",
+        MIN(created_at) AS "firstSeenAt",
+        MAX(created_at) AS "lastSeenAt",
+        COUNT(DISTINCT session_id)::int AS "totalSessions",
+        COUNT(*) FILTER (WHERE event_type = 'pageview')::int AS "totalPageViews",
+        (ARRAY_AGG(page_path ORDER BY created_at ASC))[1] AS "firstLandingPage",
+        COALESCE((ARRAY_AGG(referrer_source ORDER BY created_at ASC))[1], 'Direct') AS "originalSource",
+        (ARRAY_AGG(metadata->>'utm_campaign' ORDER BY created_at ASC))[1] AS "originalCampaign"
+      FROM project_visitor_events
+      WHERE project_id = $1 AND visitor_id = $2
+      GROUP BY visitor_id
+    `,
+      [projectId, visitorId],
+    );
+
+    if (!visitorSummary) {
+      return null;
+    }
+
+    const sessions = await manager.query(
+      `
+      SELECT
+        session_id AS "sessionId",
+        MIN(created_at) AS "startedAt",
+        MAX(created_at) AS "endedAt",
+        COALESCE(MAX(duration_seconds), 0)::int AS "durationSeconds",
+        COUNT(*) FILTER (WHERE event_type = 'pageview')::int AS "pageViewCount",
+        (ARRAY_AGG(page_path ORDER BY created_at ASC))[1] AS "landingPage",
+        COALESCE((ARRAY_AGG(referrer_source ORDER BY created_at ASC))[1], 'Direct') AS "source",
+        (ARRAY_AGG(metadata->>'utm_campaign' ORDER BY created_at ASC))[1] AS "campaign",
+        COALESCE(MAX(device_category), 'desktop') AS "deviceCategory",
+        COALESCE(MAX(browser), 'Other') AS "browser",
+        COALESCE(MAX(os), 'Other') AS "os"
+      FROM project_visitor_events
+      WHERE project_id = $1 AND visitor_id = $2
+      GROUP BY session_id
+      ORDER BY "startedAt" DESC
+    `,
+      [projectId, visitorId],
+    );
+
+    const events = await manager.query(
+      `
+      SELECT
+        id,
+        session_id AS "sessionId",
+        event_type AS "eventType",
+        page_path AS "pagePath",
+        page_title AS "pageTitle",
+        referrer,
+        referrer_source AS "referrerSource",
+        duration_seconds AS "durationSeconds",
+        metadata,
+        created_at AS "createdAt"
+      FROM project_visitor_events
+      WHERE project_id = $1 AND visitor_id = $2
+      ORDER BY created_at ASC
+    `,
+      [projectId, visitorId],
+    );
+
+    // Group events by session
+    const eventsBySession = new Map();
+    for (const ev of events) {
+      if (!eventsBySession.has(ev.sessionId)) {
+        eventsBySession.set(ev.sessionId, []);
+      }
+      eventsBySession.get(ev.sessionId).push(ev);
+    }
+
+    const enrichedSessions = sessions.map((sess) => ({
+      ...sess,
+      events: eventsBySession.get(sess.sessionId) || [],
+    }));
+
+    return {
+      ...visitorSummary,
+      sessions: enrichedSessions,
     };
   }
 }

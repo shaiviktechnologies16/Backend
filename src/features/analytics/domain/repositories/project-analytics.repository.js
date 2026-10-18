@@ -11,6 +11,22 @@ export class ProjectAnalyticsRepository {
     throw new Error("Method not implemented");
   }
 
+  async getLandingPages(projectId, options) {
+    throw new Error("Method not implemented");
+  }
+
+  async getCampaigns(projectId, options) {
+    throw new Error("Method not implemented");
+  }
+
+  async getVisitors(projectId, options) {
+    throw new Error("Method not implemented");
+  }
+
+  async getVisitorDetails(projectId, visitorId) {
+    throw new Error("Method not implemented");
+  }
+
   async getTrafficSources(projectId, options) {
     throw new Error("Method not implemented");
   }
@@ -44,6 +60,10 @@ export class ProjectAnalyticsRepository {
   }
 
   async recordEvent(eventData) {
+    throw new Error("Method not implemented");
+  }
+
+  async isRecentDuplicateEvent(options) {
     throw new Error("Method not implemented");
   }
 }

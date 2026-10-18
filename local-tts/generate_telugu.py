@@ -1,10 +1,11 @@
+from pathlib import Path
 import soundfile as sf
 
 from indic_f5_mlx import load_indicf5, generate
 
 model, _ = load_indicf5()
 
-ref_audio = "reference_24k.wav"
+ref_audio = str(Path(__file__).parent / "reference_24k_mono.wav")
 
 ref_text = """హాయ్ ఫ్రెండ్స్!
 

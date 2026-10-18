@@ -128,7 +128,17 @@ const __dirname = path.dirname(__filename);
 
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
-app.use(express.json());
+// Global body parser with strict 100kb limit for general application security.
+// Routes handling large payloads (such as /api/v1/tts for reference audio) use route-specific parsers.
+app.use((req, res, next) => {
+  if (
+    req.originalUrl?.startsWith("/api/v1/tts") ||
+    req.path?.startsWith("/api/v1/tts")
+  ) {
+    return next();
+  }
+  return express.json()(req, res, next);
+});
 app.use(sanitizeRequestBodyMiddleware);
 
 app.use(

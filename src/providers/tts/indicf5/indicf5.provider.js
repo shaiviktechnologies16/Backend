@@ -169,11 +169,18 @@ export class IndicF5Provider extends TTSProvider {
   }
 
   async getWorkerPool() {
-    const rawConfig =
-      await this.getPlatformConfigUseCase.getValue("INDICF5_BASE_URL");
+    let rawConfig = null;
+    if (this.getPlatformConfigUseCase) {
+      try {
+        rawConfig =
+          await this.getPlatformConfigUseCase.getValue("INDICF5_BASE_URL");
+      } catch {
+        // Fallback
+      }
+    }
 
     const envUrls = process.env.INDICF5_BASE_URLS;
-    const combined = envUrls || rawConfig || "http://127.0.0.1:8001";
+    const combined = envUrls || rawConfig || process.env.INDICF5_BASE_URL || "http://127.0.0.1:8001";
 
     const urls = combined
       .split(",")
@@ -185,7 +192,7 @@ export class IndicF5Provider extends TTSProvider {
 
   selectTargetWorker(workerPool) {
     if (!workerPool || workerPool.length === 0) {
-      return "http://127.0.0.1:8001";
+      return process.env.INDICF5_BASE_URL || "http://127.0.0.1:8001";
     }
 
     if (workerPool.length === 1) {
@@ -261,37 +268,43 @@ export class IndicF5Provider extends TTSProvider {
       result = { statusCode: 502, data: { detail: err.message } };
     }
 
-    if (
-      (!result || result.statusCode < 200 || result.statusCode >= 300) &&
-      targetBaseUrl !== "http://127.0.0.1:8001"
-    ) {
+    if (!result || result.statusCode < 200 || result.statusCode >= 300) {
       const localFallback = (
-        process.env.INDICF5_BASE_URL || "http://127.0.0.1:8001"
+        process.env.INDICF5_LOCAL_URL || "http://127.0.0.1:8001"
       ).replace(/\/+$/, "");
-      try {
-        const fallbackResult = await requestJson(
-          `${localFallback}/tts/clone`,
-          "POST",
-          payload,
-          30 * 1000,
-        );
 
-        if (
-          fallbackResult.statusCode >= 200 &&
-          fallbackResult.statusCode < 300
-        ) {
-          result = fallbackResult;
-          targetBaseUrl = localFallback;
-          console.log("[IndicF5] Local fallback for calibrate succeeded", {
-            baseUrl: targetBaseUrl,
-            data: fallbackResult.data,
-          });
+      const candidateWorkers = [
+        ...(config.workerPool || []).filter((w) => w !== targetBaseUrl),
+        localFallback,
+      ].filter((w, i, arr) => w !== targetBaseUrl && arr.indexOf(w) === i);
+
+      for (const fallbackWorker of candidateWorkers) {
+        try {
+          const fallbackResult = await requestJson(
+            `${fallbackWorker}/tts/clone`,
+            "POST",
+            payload,
+            30 * 1000,
+          );
+
+          if (
+            fallbackResult.statusCode >= 200 &&
+            fallbackResult.statusCode < 300
+          ) {
+            result = fallbackResult;
+            targetBaseUrl = fallbackWorker;
+            console.log("[IndicF5] Fallback for calibrate succeeded", {
+              baseUrl: targetBaseUrl,
+              data: fallbackResult.data,
+            });
+            break;
+          }
+        } catch (fbErr) {
+          console.warn(
+            `[IndicF5] Fallback to ${fallbackWorker} calibrate error:`,
+            fbErr.message,
+          );
         }
-      } catch (fbErr) {
-        console.warn(
-          "[IndicF5] Local fallback calibrate error:",
-          fbErr.message,
-        );
       }
     }
 
@@ -376,42 +389,52 @@ export class IndicF5Provider extends TTSProvider {
       }
 
       if (
-        (!createResult ||
-          createResult.statusCode < 200 ||
-          createResult.statusCode >= 300) &&
-        targetBaseUrl !== "http://127.0.0.1:8001"
+        !createResult ||
+        createResult.statusCode < 200 ||
+        createResult.statusCode >= 300
       ) {
         const localFallback = (
-          process.env.INDICF5_BASE_URL || "http://127.0.0.1:8001"
+          process.env.INDICF5_LOCAL_URL || "http://127.0.0.1:8001"
         ).replace(/\/+$/, "");
-        console.warn(
-          `[IndicF5] Target URL ${targetBaseUrl} failed with status ${createResult?.statusCode}. Attempting local fallback to ${localFallback}...`,
-        );
 
-        try {
-          const fallbackResult = await requestJson(
-            `${localFallback}/tts/jobs`,
-            "POST",
-            payload,
-            10 * 1000,
-          );
+        const candidateWorkers = [
+          ...(config.workerPool || []).filter((w) => w !== targetBaseUrl),
+          localFallback,
+        ].filter((w, i, arr) => w !== targetBaseUrl && arr.indexOf(w) === i);
 
-          if (
-            fallbackResult.statusCode >= 200 &&
-            fallbackResult.statusCode < 300
-          ) {
-            createResult = fallbackResult;
-            targetBaseUrl = localFallback;
-            console.log("[IndicF5] Local fallback succeeded", {
-              baseUrl: targetBaseUrl,
-              data: fallbackResult.data,
-            });
-          }
-        } catch (fbErr) {
+        for (const fallbackWorker of candidateWorkers) {
           console.warn(
-            "[IndicF5] Local fallback request error:",
-            fbErr.message,
+            `[IndicF5] Target URL ${targetBaseUrl} failed with status ${createResult?.statusCode}. Attempting fallback to ${fallbackWorker}...`,
           );
+
+          try {
+            const fallbackResult = await requestJson(
+              `${fallbackWorker}/tts/jobs`,
+              "POST",
+              payload,
+              10 * 1000,
+            );
+
+            if (
+              fallbackResult.statusCode >= 200 &&
+              fallbackResult.statusCode < 300
+            ) {
+              createResult = fallbackResult;
+              this.decrementWorkerJobs(targetBaseUrl);
+              targetBaseUrl = fallbackWorker;
+              this.incrementWorkerJobs(targetBaseUrl);
+              console.log("[IndicF5] Fallback succeeded", {
+                baseUrl: targetBaseUrl,
+                data: fallbackResult.data,
+              });
+              break;
+            }
+          } catch (fbErr) {
+            console.warn(
+              `[IndicF5] Fallback to ${fallbackWorker} request error:`,
+              fbErr.message,
+            );
+          }
         }
       }
 
@@ -578,20 +601,33 @@ export class IndicF5Provider extends TTSProvider {
         result = null;
       }
 
-      if (
-        (!result || result.statusCode < 200 || result.statusCode >= 300) &&
-        baseUrl !== "http://127.0.0.1:8001"
-      ) {
+      if (!result || result.statusCode < 200 || result.statusCode >= 300) {
         const localFallback = (
-          process.env.INDICF5_BASE_URL || "http://127.0.0.1:8001"
+          process.env.INDICF5_LOCAL_URL || "http://127.0.0.1:8001"
         ).replace(/\/+$/, "");
-        try {
-          result = await getTtsHealth(
-            `${localFallback}/health`,
-            HEALTH_TIMEOUT_MS,
-          );
-        } catch {
-          result = null;
+
+        const candidateWorkers = [
+          ...(config.workerPool || []).filter((w) => w !== baseUrl),
+          localFallback,
+        ].filter((w, i, arr) => w !== baseUrl && arr.indexOf(w) === i);
+
+        for (const fallbackWorker of candidateWorkers) {
+          try {
+            const fbResult = await getTtsHealth(
+              `${fallbackWorker}/health`,
+              HEALTH_TIMEOUT_MS,
+            );
+            if (
+              fbResult &&
+              fbResult.statusCode >= 200 &&
+              fbResult.statusCode < 300
+            ) {
+              result = fbResult;
+              break;
+            }
+          } catch {
+            // continue checking candidate workers
+          }
         }
       }
 

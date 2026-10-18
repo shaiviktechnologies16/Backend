@@ -82,6 +82,16 @@ const envConfig = {
       process.env.AUTH_RATE_LIMIT_MAX_ATTEMPTS || 5,
     ),
   },
+
+  tts: {
+    huggingFaceToken:
+      process.env["Hugging-Face-TTS"] ||
+      process.env.HUGGING_FACE_TTS ||
+      process.env.HF_TOKEN,
+    fishAudioApiUrl:
+      process.env.FISH_AUDIO_API_URL || process.env.OPENROUTER_SPEECH_URL,
+    indicF5BaseUrl: process.env.INDICF5_BASE_URL,
+  },
 };
 
 export default envConfig;

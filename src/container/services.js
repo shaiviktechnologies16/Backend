@@ -147,6 +147,7 @@ const synthesizeSpeechUseCase = new SynthesizeSpeechUseCase({
 
 const ttsModule = createTTSModule({
   synthesizeSpeechUseCase,
+  ttsProviderFactory,
 });
 
 const uploadModule = createUploadModule({

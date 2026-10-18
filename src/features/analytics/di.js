@@ -20,6 +20,10 @@ import { GetProjectChatbotAnalyticsUseCase } from "./application/use-cases/get-p
 import { GetProjectTrackingConfigUseCase } from "./application/use-cases/get-project-tracking-config.usecase.js";
 import { UpdateProjectTrackingConfigUseCase } from "./application/use-cases/update-project-tracking-config.usecase.js";
 import { RotateProjectTrackingKeyUseCase } from "./application/use-cases/rotate-project-tracking-key.usecase.js";
+import { GetProjectAnalyticsVisitorsUseCase } from "./application/use-cases/get-project-analytics-visitors.usecase.js";
+import { GetProjectVisitorDetailsUseCase } from "./application/use-cases/get-project-visitor-details.usecase.js";
+import { GetProjectAnalyticsLandingPagesUseCase } from "./application/use-cases/get-project-analytics-landing-pages.usecase.js";
+import { GetProjectAnalyticsCampaignsUseCase } from "./application/use-cases/get-project-analytics-campaigns.usecase.js";
 
 import { AnalyticsController } from "./presentation/controllers/analytics.controller.js";
 import { ProjectAnalyticsController } from "./presentation/controllers/project-analytics.controller.js";
@@ -103,6 +107,26 @@ export const createAnalyticsModule = ({ projectRepository = null } = {}) => {
     projectAnalyticsRepository,
   });
 
+  const getProjectAnalyticsVisitorsUseCase =
+    new GetProjectAnalyticsVisitorsUseCase({
+      projectAnalyticsRepository,
+    });
+
+  const getProjectVisitorDetailsUseCase =
+    new GetProjectVisitorDetailsUseCase({
+      projectAnalyticsRepository,
+    });
+
+  const getProjectAnalyticsLandingPagesUseCase =
+    new GetProjectAnalyticsLandingPagesUseCase({
+      projectAnalyticsRepository,
+    });
+
+  const getProjectAnalyticsCampaignsUseCase =
+    new GetProjectAnalyticsCampaignsUseCase({
+      projectAnalyticsRepository,
+    });
+
   const analyticsController = new AnalyticsController({
     getAnalyticsOverviewUseCase,
     getAnalyticsTrendsUseCase,
@@ -120,6 +144,10 @@ export const createAnalyticsModule = ({ projectRepository = null } = {}) => {
     getProjectTrackingConfigUseCase,
     updateProjectTrackingConfigUseCase,
     rotateProjectTrackingKeyUseCase,
+    getProjectAnalyticsVisitorsUseCase,
+    getProjectVisitorDetailsUseCase,
+    getProjectAnalyticsLandingPagesUseCase,
+    getProjectAnalyticsCampaignsUseCase,
   });
 
   const publicAnalyticsController = new PublicAnalyticsController({

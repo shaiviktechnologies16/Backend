@@ -136,7 +136,106 @@ describe("Project-Level Visitor Analytics", () => {
       assert.doesNotMatch(recordedEvent.pagePath, /supersecret123/);
     });
 
-    it("rejects unknown or invalid tracking keys", async () => {
+    it("records a valid event using Shaivik Technologies tracking key shv_trk_f9dd72484d5628a271c4f306", async () => {
+      let savedEvent = null;
+      const mockRepo = {
+        findConfigByTrackingKey: async (key) => {
+          if (key === "shv_trk_f9dd72484d5628a271c4f306") {
+            return {
+              projectId: "a3a796ff-8c63-4e6e-8a72-6e6b9dcad114",
+              organizationId: "5e62e09b-8bf7-41ab-a13c-e0bfa70e0192",
+              isEnabled: true,
+              allowedDomains: [],
+            };
+          }
+          return null;
+        },
+        recordEvent: async (event) => {
+          savedEvent = event;
+          return { id: "evt-prod-100" };
+        },
+      };
+
+      const useCase = new RecordVisitorEventUseCase({
+        projectAnalyticsRepository: mockRepo,
+      });
+
+      const res = await useCase.execute({
+        trackingKey: "shv_trk_f9dd72484d5628a271c4f306",
+        eventType: "pageview",
+        visitorId: "vis-shv-1",
+        sessionId: "sess-shv-1",
+        pagePath: "/services/ai-solutions",
+        pageTitle: "AI Solutions - Shaivik Technologies",
+        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+      });
+
+      assert.equal(res.recorded, true);
+      assert.equal(res.eventId, "evt-prod-100");
+      assert.equal(savedEvent.projectId, "a3a796ff-8c63-4e6e-8a72-6e6b9dcad114");
+      assert.equal(savedEvent.pagePath, "/services/ai-solutions");
+      assert.equal(savedEvent.browser, "Chrome");
+      assert.equal(savedEvent.deviceCategory, "desktop");
+    });
+
+    it("generates fallback anonymous visitor and session IDs when omitted", async () => {
+      let savedEvent = null;
+      const mockRepo = {
+        findConfigByTrackingKey: async () => ({
+          projectId: "proj-1",
+          organizationId: "org-1",
+          isEnabled: true,
+        }),
+        recordEvent: async (evt) => {
+          savedEvent = evt;
+          return { id: "evt-fallback" };
+        },
+      };
+
+      const useCase = new RecordVisitorEventUseCase({
+        projectAnalyticsRepository: mockRepo,
+      });
+
+      const res = await useCase.execute({
+        trackingKey: "shv_trk_valid",
+        userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1",
+      });
+
+      assert.equal(res.recorded, true);
+      assert.ok(savedEvent.visitorId.startsWith("vid_"));
+      assert.ok(savedEvent.sessionId.startsWith("sid_"));
+      assert.equal(savedEvent.deviceCategory, "mobile");
+    });
+
+    it("returns recorded: false when tracking is disabled for project", async () => {
+      let recordCalled = false;
+      const mockRepo = {
+        findConfigByTrackingKey: async () => ({
+          projectId: "proj-disabled",
+          organizationId: "org-1",
+          isEnabled: false,
+        }),
+        recordEvent: async () => {
+          recordCalled = true;
+        },
+      };
+
+      const useCase = new RecordVisitorEventUseCase({
+        projectAnalyticsRepository: mockRepo,
+      });
+
+      const res = await useCase.execute({
+        trackingKey: "shv_trk_disabled",
+        visitorId: "vis-1",
+        sessionId: "sess-1",
+      });
+
+      assert.equal(res.recorded, false);
+      assert.equal(res.reason, "Tracking is disabled for this project.");
+      assert.equal(recordCalled, false);
+    });
+
+    it("rejects unknown or invalid tracking keys with TRACKING_CONFIG_NOT_FOUND", async () => {
       const mockRepo = {
         findConfigByTrackingKey: async () => null,
       };
@@ -148,7 +247,7 @@ describe("Project-Level Visitor Analytics", () => {
       await assert.rejects(
         async () => {
           await useCase.execute({
-            trackingKey: "shv_trk_nonexistent",
+            trackingKey: "shv_trk_unknown_project",
             visitorId: "vis-1",
             sessionId: "sess-1",
             pagePath: "/",
@@ -187,6 +286,69 @@ describe("Project-Level Visitor Analytics", () => {
       assert.equal(result.recorded, false);
       assert.equal(result.reason, "Bot traffic filtered.");
       assert.equal(recordCalled, false);
+    });
+
+    it("safely trims whitespace around tracking keys", async () => {
+      let queriedKey = null;
+      const mockRepo = {
+        findConfigByTrackingKey: async (key) => {
+          queriedKey = key;
+          return {
+            projectId: "a3a796ff-8c63-4e6e-8a72-6e6b9dcad114",
+            organizationId: "5e62e09b-8bf7-41ab-a13c-e0bfa70e0192",
+            isEnabled: true,
+            allowedDomains: [],
+          };
+        },
+        recordEvent: async () => ({ id: "evt-trimmed" }),
+      };
+
+      const useCase = new RecordVisitorEventUseCase({
+        projectAnalyticsRepository: mockRepo,
+      });
+
+      const res = await useCase.execute({
+        trackingKey: "  shv_trk_f9dd72484d5628a271c4f306 \n",
+        visitorId: "vis-trim",
+        sessionId: "sess-trim",
+        pagePath: "/",
+        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+      });
+
+      assert.equal(res.recorded, true);
+      assert.equal(queriedKey, "shv_trk_f9dd72484d5628a271c4f306");
+    });
+
+    it("rejects empty or non-string tracking keys with INVALID_TRACKING_KEY", async () => {
+      const mockRepo = {
+        findConfigByTrackingKey: async () => null,
+      };
+
+      const useCase = new RecordVisitorEventUseCase({
+        projectAnalyticsRepository: mockRepo,
+      });
+
+      await assert.rejects(
+        async () => {
+          await useCase.execute({
+            trackingKey: "   ",
+            visitorId: "vis-1",
+            sessionId: "sess-1",
+          });
+        },
+        (err) => err.statusCode === 400 && err.errorCode === "INVALID_TRACKING_KEY",
+      );
+
+      await assert.rejects(
+        async () => {
+          await useCase.execute({
+            trackingKey: null,
+            visitorId: "vis-1",
+            sessionId: "sess-1",
+          });
+        },
+        (err) => err.statusCode === 400 && err.errorCode === "INVALID_TRACKING_KEY",
+      );
     });
   });
 
@@ -292,6 +454,24 @@ describe("Project-Level Visitor Analytics", () => {
 
       const rotated = await rotateKeyUseCase.execute({ projectId: "proj-1" });
       assert.equal(rotated.trackingKey, "shv_trk_new_rotated");
+
+      // Test explicit tracking key update
+      await updateConfigUseCase.execute({
+        projectId: "proj-1",
+        trackingKey: "shv_trk_f9dd72484d5628a271c4f306",
+      });
+      assert.equal(storedConfig.trackingKey, "shv_trk_f9dd72484d5628a271c4f306");
+
+      // Test format validation rejects invalid keys
+      await assert.rejects(
+        async () => {
+          await updateConfigUseCase.execute({
+            projectId: "proj-1",
+            trackingKey: "invalid_format_key",
+          });
+        },
+        (err) => err.statusCode === 400 && err.errorCode === "INVALID_TRACKING_KEY_FORMAT",
+      );
     });
   });
 });

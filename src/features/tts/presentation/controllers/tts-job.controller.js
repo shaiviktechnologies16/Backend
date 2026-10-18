@@ -7,19 +7,56 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const MAX_REFERENCE_AUDIO_BYTES = 15 * 1024 * 1024; // 15 MB binary limit
+
+function getBase64DecodedByteLength(base64Str) {
+  if (!base64Str || typeof base64Str !== "string") return 0;
+  let clean = base64Str.trim();
+  const commaIdx = clean.indexOf(",");
+  if (commaIdx !== -1) {
+    clean = clean.slice(commaIdx + 1);
+  }
+  clean = clean.replace(/\s+/g, "");
+  let padding = 0;
+  if (clean.endsWith("==")) padding = 2;
+  else if (clean.endsWith("=")) padding = 1;
+  return Math.max(0, Math.floor((clean.length * 3) / 4) - padding);
+}
+
 export function createTtsJobController({
   createTtsJobUseCase,
   getTtsJobUseCase,
   ttsJobRepository,
   ttsJobProcessor,
+  ttsProviderFactory,
 }) {
   return {
     async create(req, res, next) {
       try {
+        const referenceAudio =
+          req.body.referenceAudioBase64 || req.body.reference_audio_base64;
+
+        if (referenceAudio) {
+          const byteLength = getBase64DecodedByteLength(referenceAudio);
+          if (byteLength > MAX_REFERENCE_AUDIO_BYTES) {
+            return res.status(413).json({
+              success: false,
+              error: {
+                code: "PAYLOAD_TOO_LARGE",
+                message: `Reference audio exceeds maximum allowed size of 15 MB (received ${(
+                  byteLength /
+                  (1024 * 1024)
+                ).toFixed(2)} MB).`,
+              },
+            });
+          }
+        }
+
         const job = await createTtsJobUseCase.execute({
           userId: req.user.id,
           text: req.body.text,
           options: {
+            provider: req.body.provider || req.body.options?.provider,
             voiceMode: req.body.voiceMode || req.body.voice_mode,
             presetVoice: req.body.presetVoice || req.body.preset_voice,
             customVoiceId: req.body.customVoiceId || req.body.custom_voice_id,
@@ -36,7 +73,7 @@ export function createTtsJobController({
 
         setImmediate(() => {
           ttsJobProcessor.process(job.id).catch((error) => {
-            console.error(`TTS job ${job.id} failed:`, error);
+            console.error(`TTS job ${job.id} failed:`, error?.message || error);
           });
         });
       } catch (error) {
@@ -46,13 +83,54 @@ export function createTtsJobController({
 
     async cloneVoice(req, res, next) {
       try {
+        const referenceAudio =
+          req.body.reference_audio_base64 || req.body.referenceAudioBase64;
+
+        if (referenceAudio) {
+          const byteLength = getBase64DecodedByteLength(referenceAudio);
+          if (byteLength > MAX_REFERENCE_AUDIO_BYTES) {
+            return res.status(413).json({
+              success: false,
+              error: {
+                code: "PAYLOAD_TOO_LARGE",
+                message: `Reference audio exceeds maximum allowed size of 15 MB (received ${(
+                  byteLength /
+                  (1024 * 1024)
+                ).toFixed(2)} MB).`,
+              },
+            });
+          }
+        }
+
+        const providerName =
+          req.body.provider || req.query?.provider || req.body.options?.provider;
+        let provider = null;
+        if (ttsProviderFactory) {
+          if (providerName) {
+            provider = ttsProviderFactory.getProviderByName(providerName);
+          }
+          if (!provider) {
+            provider = await ttsProviderFactory.getProvider();
+          }
+        }
+
+        if (provider && typeof provider.calibrateVoice === "function") {
+          const result = await provider.calibrateVoice({
+            referenceAudioBase64: referenceAudio,
+            referenceText: req.body.reference_text || req.body.referenceText,
+            customVoiceId: req.body.custom_voice_id || req.body.customVoiceId,
+          });
+          return res.json(result);
+        }
+
         const localTtsUrl =
-          process.env.INDICF5_BASE_URL || "http://127.0.0.1:8001";
+          process.env.INDICF5_LOCAL_URL ||
+          process.env.INDICF5_BASE_URL ||
+          "http://127.0.0.1:8001";
         const result = await requestJson(`${localTtsUrl}/tts/clone`, {
           method: "POST",
           body: {
-            reference_audio_base64:
-              req.body.reference_audio_base64 || req.body.referenceAudioBase64,
+            reference_audio_base64: referenceAudio,
             reference_text: req.body.reference_text || req.body.referenceText,
             custom_voice_id: req.body.custom_voice_id || req.body.customVoiceId,
           },
@@ -130,7 +208,7 @@ export function createTtsJobController({
     async listOutputs(req, res, next) {
       try {
         const localTtsUrl =
-          process.env.INDICF5_BASE_URL || "http://127.0.0.1:8001";
+          process.env.INDICF5_BASE_URL || "";
         const result = await fetchJson(`${localTtsUrl}/tts/outputs`);
         const files = result?.body?.files || [];
         return res.json({ files });
@@ -160,7 +238,9 @@ export function createTtsJobController({
             "../../../../../local-tts/outputs/batch",
             filename,
           ),
+          path.resolve(__dirname, "../../../../../../storage/tts", filename),
           path.resolve(process.cwd(), "storage/tts", filename),
+          path.resolve(process.cwd(), "Backend/storage/tts", filename),
         ];
 
         let targetPath = null;
@@ -181,7 +261,7 @@ export function createTtsJobController({
         }
 
         const localTtsUrl =
-          process.env.INDICF5_BASE_URL || "http://127.0.0.1:8001";
+          process.env.INDICF5_BASE_URL || "";
 
         return new Promise((resolve) => {
           const proxyReq = http.get(
@@ -249,7 +329,7 @@ export function createTtsJobController({
         // Also call local-tts FastAPI server delete endpoint
         try {
           const localTtsUrl =
-            process.env.INDICF5_BASE_URL || "http://127.0.0.1:8001";
+            process.env.INDICF5_BASE_URL || "";
           const deleteReq = http.request(
             `${localTtsUrl}/tts/outputs/${encodeURIComponent(filename)}`,
             { method: "DELETE" },
@@ -272,7 +352,7 @@ export function createTtsJobController({
     async getEngineConfig(req, res, next) {
       try {
         const localTtsUrl =
-          process.env.INDICF5_BASE_URL || "http://127.0.0.1:8001";
+          process.env.INDICF5_BASE_URL || "";
         const result = await requestJson(`${localTtsUrl}/tts/config`);
         return res.json(result?.body || {});
       } catch (error) {
@@ -283,7 +363,7 @@ export function createTtsJobController({
     async updateEngineConfig(req, res, next) {
       try {
         const localTtsUrl =
-          process.env.INDICF5_BASE_URL || "http://127.0.0.1:8001";
+          process.env.INDICF5_BASE_URL || "";
         const result = await requestJson(`${localTtsUrl}/tts/config`, {
           method: "POST",
           body: req.body,
@@ -297,7 +377,7 @@ export function createTtsJobController({
     async createBatchJob(req, res, next) {
       try {
         const localTtsUrl =
-          process.env.INDICF5_BASE_URL || "http://127.0.0.1:8001";
+          process.env.INDICF5_BASE_URL || "";
         const result = await requestJson(`${localTtsUrl}/tts/batch-jobs`, {
           method: "POST",
           body: req.body,
@@ -311,7 +391,7 @@ export function createTtsJobController({
     async getBatchJob(req, res, next) {
       try {
         const localTtsUrl =
-          process.env.INDICF5_BASE_URL || "http://127.0.0.1:8001";
+          process.env.INDICF5_BASE_URL || "";
         const result = await requestJson(
           `${localTtsUrl}/tts/batch-jobs/${encodeURIComponent(req.params.batchId)}`,
         );
@@ -324,7 +404,7 @@ export function createTtsJobController({
     async downloadBatchZip(req, res, next) {
       try {
         const localTtsUrl =
-          process.env.INDICF5_BASE_URL || "http://127.0.0.1:8001";
+          process.env.INDICF5_BASE_URL || "";
         const batchId = encodeURIComponent(req.params.batchId);
         return new Promise((resolve) => {
           const proxyReq = http.get(

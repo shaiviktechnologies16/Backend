@@ -70,6 +70,10 @@ export function createProjectAnalyticsRoutes({
   router.get("/overview", analyticsPermission, projectAnalyticsController.getOverview);
   router.get("/trends", analyticsPermission, projectAnalyticsController.getTrends);
   router.get("/pages", analyticsPermission, projectAnalyticsController.getPages);
+  router.get("/landing-pages", analyticsPermission, projectAnalyticsController.getLandingPages);
+  router.get("/campaigns", analyticsPermission, projectAnalyticsController.getCampaigns);
+  router.get("/visitors", analyticsPermission, projectAnalyticsController.getVisitors);
+  router.get("/visitors/:visitorId", analyticsPermission, projectAnalyticsController.getVisitorDetails);
   router.get("/sources", analyticsPermission, projectAnalyticsController.getSources);
   router.get("/devices", analyticsPermission, projectAnalyticsController.getDevices);
   router.get("/chatbot", analyticsPermission, projectAnalyticsController.getChatbot);

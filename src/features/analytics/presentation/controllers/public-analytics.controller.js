@@ -23,9 +23,23 @@ export class PublicAnalyticsController {
         req.headers["x-forwarded-for"]?.split(",")[0] ||
         req.socket?.remoteAddress;
 
+      const rawKey =
+        payload.trackingKey ||
+        payload.tracking_key ||
+        payload.projectId ||
+        payload.project_id ||
+        payload.trackingId ||
+        payload.tracking_id;
+      const trackingKey =
+        typeof rawKey === "string"
+          ? rawKey.trim()
+          : rawKey
+            ? String(rawKey).trim()
+            : "";
+
       const result = await this.recordVisitorEventUseCase.execute({
-        trackingKey: payload.trackingKey || payload.projectId,
-        eventType: payload.eventType || "pageview",
+        trackingKey,
+        eventType: payload.eventType || payload.event || "pageview",
         visitorId: payload.visitorId,
         sessionId: payload.sessionId,
         pagePath: payload.pagePath || payload.path || "/",
