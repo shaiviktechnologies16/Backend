@@ -28,7 +28,6 @@ export function createTtsJobController({
   getTtsJobUseCase,
   ttsJobRepository,
   ttsJobProcessor,
-  ttsProviderFactory,
 }) {
   return {
     async create(req, res, next) {
@@ -73,6 +72,7 @@ export function createTtsJobController({
 
         setImmediate(() => {
           ttsJobProcessor.process(job.id).catch((error) => {
+            console.error(`TTS job ${job.id} failed:`, error);
             console.error(`TTS job ${job.id} failed:`, error?.message || error);
           });
         });
@@ -102,35 +102,14 @@ export function createTtsJobController({
           }
         }
 
-        const providerName =
-          req.body.provider || req.query?.provider || req.body.options?.provider;
-        let provider = null;
-        if (ttsProviderFactory) {
-          if (providerName) {
-            provider = ttsProviderFactory.getProviderByName(providerName);
-          }
-          if (!provider) {
-            provider = await ttsProviderFactory.getProvider();
-          }
-        }
-
-        if (provider && typeof provider.calibrateVoice === "function") {
-          const result = await provider.calibrateVoice({
-            referenceAudioBase64: referenceAudio,
-            referenceText: req.body.reference_text || req.body.referenceText,
-            customVoiceId: req.body.custom_voice_id || req.body.customVoiceId,
-          });
-          return res.json(result);
-        }
-
         const localTtsUrl =
-          process.env.INDICF5_LOCAL_URL ||
-          process.env.INDICF5_BASE_URL ||
-          "http://127.0.0.1:8001";
+          process.env.INDICF5_BASE_URL || "http://127.0.0.1:8001";
+        process.env.INDICF5_BASE_URL || "";
         const result = await requestJson(`${localTtsUrl}/tts/clone`, {
           method: "POST",
           body: {
-            reference_audio_base64: referenceAudio,
+            reference_audio_base64:
+              req.body.reference_audio_base64 || req.body.referenceAudioBase64,
             reference_text: req.body.reference_text || req.body.referenceText,
             custom_voice_id: req.body.custom_voice_id || req.body.customVoiceId,
           },
@@ -208,7 +187,8 @@ export function createTtsJobController({
     async listOutputs(req, res, next) {
       try {
         const localTtsUrl =
-          process.env.INDICF5_BASE_URL || "";
+          process.env.INDICF5_BASE_URL || "http://127.0.0.1:8001";
+        process.env.INDICF5_BASE_URL || "";
         const result = await fetchJson(`${localTtsUrl}/tts/outputs`);
         const files = result?.body?.files || [];
         return res.json({ files });
@@ -261,7 +241,8 @@ export function createTtsJobController({
         }
 
         const localTtsUrl =
-          process.env.INDICF5_BASE_URL || "";
+          process.env.INDICF5_BASE_URL || "http://127.0.0.1:8001";
+        process.env.INDICF5_BASE_URL || "";
 
         return new Promise((resolve) => {
           const proxyReq = http.get(
@@ -329,7 +310,8 @@ export function createTtsJobController({
         // Also call local-tts FastAPI server delete endpoint
         try {
           const localTtsUrl =
-            process.env.INDICF5_BASE_URL || "";
+            process.env.INDICF5_BASE_URL || "http://127.0.0.1:8001";
+          process.env.INDICF5_BASE_URL || "";
           const deleteReq = http.request(
             `${localTtsUrl}/tts/outputs/${encodeURIComponent(filename)}`,
             { method: "DELETE" },
@@ -352,7 +334,8 @@ export function createTtsJobController({
     async getEngineConfig(req, res, next) {
       try {
         const localTtsUrl =
-          process.env.INDICF5_BASE_URL || "";
+          process.env.INDICF5_BASE_URL || "http://127.0.0.1:8001";
+        process.env.INDICF5_BASE_URL || "";
         const result = await requestJson(`${localTtsUrl}/tts/config`);
         return res.json(result?.body || {});
       } catch (error) {
@@ -363,7 +346,8 @@ export function createTtsJobController({
     async updateEngineConfig(req, res, next) {
       try {
         const localTtsUrl =
-          process.env.INDICF5_BASE_URL || "";
+          process.env.INDICF5_BASE_URL || "http://127.0.0.1:8001";
+        process.env.INDICF5_BASE_URL || "";
         const result = await requestJson(`${localTtsUrl}/tts/config`, {
           method: "POST",
           body: req.body,
@@ -377,7 +361,8 @@ export function createTtsJobController({
     async createBatchJob(req, res, next) {
       try {
         const localTtsUrl =
-          process.env.INDICF5_BASE_URL || "";
+          process.env.INDICF5_BASE_URL || "http://127.0.0.1:8001";
+        process.env.INDICF5_BASE_URL || "";
         const result = await requestJson(`${localTtsUrl}/tts/batch-jobs`, {
           method: "POST",
           body: req.body,
@@ -391,7 +376,8 @@ export function createTtsJobController({
     async getBatchJob(req, res, next) {
       try {
         const localTtsUrl =
-          process.env.INDICF5_BASE_URL || "";
+          process.env.INDICF5_BASE_URL || "http://127.0.0.1:8001";
+        process.env.INDICF5_BASE_URL || "";
         const result = await requestJson(
           `${localTtsUrl}/tts/batch-jobs/${encodeURIComponent(req.params.batchId)}`,
         );
@@ -404,7 +390,8 @@ export function createTtsJobController({
     async downloadBatchZip(req, res, next) {
       try {
         const localTtsUrl =
-          process.env.INDICF5_BASE_URL || "";
+          process.env.INDICF5_BASE_URL || "http://127.0.0.1:8001";
+        process.env.INDICF5_BASE_URL || "";
         const batchId = encodeURIComponent(req.params.batchId);
         return new Promise((resolve) => {
           const proxyReq = http.get(

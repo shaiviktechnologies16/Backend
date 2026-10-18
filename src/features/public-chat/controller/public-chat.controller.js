@@ -338,6 +338,10 @@ export const createPublicChatController = ({
         req.params.publicKey,
       );
 
+      res.setHeader(
+        "Cache-Control",
+        "public, max-age=60, s-maxage=300, stale-while-revalidate=600",
+      );
       res.status(200).json({
         success: true,
         data: config,
@@ -349,6 +353,10 @@ export const createPublicChatController = ({
         req.params.agentId,
       );
 
+      res.setHeader(
+        "Cache-Control",
+        "public, max-age=60, s-maxage=300, stale-while-revalidate=600",
+      );
       res.status(200).json({
         success: true,
         data: config,

@@ -36,12 +36,10 @@ export function createTTSController({ synthesizeSpeechUseCase }) {
 
         const result = await synthesizeSpeechUseCase.execute({
           text: req.body.text,
+          provider: req.body.provider,
           options: {
-            provider: req.body.provider || req.body.options?.provider,
-            format: req.body.format || req.body.options?.format,
-            voiceMode: req.body.voiceMode || req.body.voice_mode,
-            presetVoice: req.body.presetVoice || req.body.preset_voice,
-            customVoiceId: req.body.customVoiceId || req.body.custom_voice_id,
+            provider: req.body.provider,
+            voiceMode: req.body.voiceMode,
             speed: req.body.speed,
             speakingStyle: req.body.speakingStyle,
             steps: req.body.steps,

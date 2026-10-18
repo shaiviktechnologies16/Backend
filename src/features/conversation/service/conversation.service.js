@@ -3060,17 +3060,24 @@ export class ConversationService {
       throw new AppError("Agent is not public.", 403, "AGENT_NOT_PUBLIC");
     }
 
-    let dailyRequests = null;
-    if (this.checkPlanUsageUseCase && agent.project?.organizationId) {
+    const dailyRequestsPromise = (async () => {
+      if (!this.checkPlanUsageUseCase || !agent.project?.organizationId) {
+        return null;
+      }
       try {
-        const usageState = await this.checkPlanUsageUseCase.getUsageState({
-          organizationId: agent.project.organizationId,
-          visitorId,
-          networkIdentityHash,
-        });
+        const usageState = await Promise.race([
+          this.checkPlanUsageUseCase.getUsageState({
+            organizationId: agent.project.organizationId,
+            visitorId,
+            networkIdentityHash,
+          }),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Usage check timeout")), 2500),
+          ),
+        ]);
 
         if (usageState?.usage) {
-          dailyRequests = {
+          return {
             organization: {
               used: usageState.usage.daily.requests,
               limit: usageState.usage.daily.requestsLimit,
@@ -3091,78 +3098,83 @@ export class ConversationService {
           };
         }
       } catch {
-        // Fallback
+        // Fallback gracefully on timeout or usage check error
       }
-    }
+      return null;
+    })();
 
-    if (!visitorId && !conversationId) {
-      return {
-        conversation: null,
-        messages: [],
-        dailyRequests,
-      };
-    }
+    const convPromise = (async () => {
+      if (!visitorId && !conversationId) {
+        return { conversation: null, messages: [] };
+      }
 
-    let activeConv = null;
+      let activeConv = null;
 
-    if (conversationId) {
-      try {
-        const candidate =
-          await this.conversationRepository.findById(conversationId);
-        if (
-          candidate &&
-          !candidate.isCompleted &&
-          candidate.agentId === agent.id &&
-          (!visitorId ||
-            candidate.visitorId === visitorId ||
-            candidate.visitorId === null)
-        ) {
-          activeConv = candidate;
+      if (conversationId) {
+        try {
+          const candidate =
+            await this.conversationRepository.findById(conversationId);
+          if (
+            candidate &&
+            !candidate.isCompleted &&
+            candidate.agentId === agent.id &&
+            (!visitorId ||
+              candidate.visitorId === visitorId ||
+              candidate.visitorId === null)
+          ) {
+            activeConv = candidate;
+          }
+        } catch {
+          // Fallback to visitor lookup
         }
-      } catch {
-        // Fallback to visitor lookup
       }
-    }
 
-    if (!activeConv && visitorId) {
-      const latestConv =
-        await this.conversationRepository.findLatestByVisitorAndAgent(
-          visitorId,
-          agent.id,
-        );
+      if (!activeConv && visitorId) {
+        const latestConv =
+          await this.conversationRepository.findLatestByVisitorAndAgent(
+            visitorId,
+            agent.id,
+          );
 
-      if (latestConv && !latestConv.isCompleted) {
-        activeConv = latestConv;
+        if (latestConv && !latestConv.isCompleted) {
+          activeConv = latestConv;
+        }
       }
-    }
 
-    if (!activeConv) {
+      if (!activeConv) {
+        return { conversation: null, messages: [] };
+      }
+
+      const messages = await this.messageRepository.findByConversationId(
+        activeConv.id,
+      );
+
       return {
-        conversation: null,
-        messages: [],
-        dailyRequests,
+        conversation: {
+          id: activeConv.id,
+          isHandover: Boolean(activeConv.isHandover),
+          isCompleted: Boolean(activeConv.isCompleted),
+          isAgentTyping: activeConv.isHandover
+            ? this.isAgentTyping(activeConv.id)
+            : false,
+        },
+        messages: messages.map((m) => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          createdAt: m.createdAt,
+        })),
       };
-    }
+    })();
 
-    const messages = await this.messageRepository.findByConversationId(
-      activeConv.id,
-    );
+    const [dailyRequests, convResult] = await Promise.all([
+      dailyRequestsPromise,
+      convPromise,
+    ]);
 
     return {
-      conversation: {
-        id: activeConv.id,
-        isHandover: Boolean(activeConv.isHandover),
-        isCompleted: Boolean(activeConv.isCompleted),
-        isAgentTyping: activeConv.isHandover
-          ? this.isAgentTyping(activeConv.id)
-          : false,
-      },
-      messages: messages.map((m) => ({
-        id: m.id,
-        role: m.role,
-        content: m.content,
-        createdAt: m.createdAt,
-      })),
+      conversation: convResult.conversation,
+      messages: convResult.messages,
       dailyRequests,
     };
   }
