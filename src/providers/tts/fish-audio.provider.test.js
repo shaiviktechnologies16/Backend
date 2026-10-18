@@ -69,7 +69,9 @@ test("detectAudioMimeFromBuffer recognizes common audio signatures", () => {
   assert.equal(detectAudioMimeFromBuffer(m4aBuf), "audio/mp4");
 
   // WebM header
-  const webmBuf = Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+  const webmBuf = Buffer.from([
+    0x1a, 0x45, 0xdf, 0xa3, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  ]);
   assert.equal(detectAudioMimeFromBuffer(webmBuf), "audio/webm");
 });
 
@@ -85,7 +87,9 @@ test("normalizeReferenceAudio formats data URI correctly", () => {
 
 test("normalizeReferenceAudio rejects corrupt and non-audio data", () => {
   // Random text
-  const textBuf = Buffer.from("Hello world, this is a plain text file, not audio.");
+  const textBuf = Buffer.from(
+    "Hello world, this is a plain text file, not audio.",
+  );
   assert.throws(
     () => {
       normalizeReferenceAudio(textBuf.toString("base64"));
@@ -126,7 +130,8 @@ test("FishAudioProvider throws actionable error when API key is missing", async 
     getPlatformConfigUseCase: { getValue: async () => null },
   });
   provider.resolveApiKey = async () => null;
-  provider.resolveSpeechUrl = async () => "https://openrouter.ai/api/v1/audio/speech";
+  provider.resolveSpeechUrl = async () =>
+    "https://openrouter.ai/api/v1/audio/speech";
 
   await assert.rejects(
     async () => {
@@ -160,7 +165,8 @@ test("FishAudioProvider resolveSpeechUrl reads URL from env with no hardcoded fa
     },
   );
 
-  process.env.FISH_AUDIO_API_URL = "https://custom-tts.shaiviktechnologies.in/api";
+  process.env.FISH_AUDIO_API_URL =
+    "https://custom-tts.shaiviktechnologies.in/api";
   assert.equal(
     await provider.resolveSpeechUrl(),
     "https://custom-tts.shaiviktechnologies.in/api",
@@ -171,20 +177,43 @@ test("FishAudioProvider resolveSpeechUrl reads URL from env with no hardcoded fa
   if (originalSpeechUrl) process.env.OPENROUTER_SPEECH_URL = originalSpeechUrl;
 });
 
-test("FishAudioProvider resolveApiKey supports Hugging-Face-TTS key token from env", async () => {
+test("FishAudioProvider resolveApiKey supports Hugging-Face-TTS key token from env", async (t) => {
   const originalKey = process.env["Hugging-Face-TTS"];
   const originalOrKey = process.env.OPENROUTER_API_KEY;
+  const originalFishKey = process.env.FISH_AUDIO_API_KEY;
+
+  t.after(() => {
+    if (originalKey === undefined) {
+      delete process.env["Hugging-Face-TTS"];
+    } else {
+      process.env["Hugging-Face-TTS"] = originalKey;
+    }
+
+    if (originalOrKey === undefined) {
+      delete process.env.OPENROUTER_API_KEY;
+    } else {
+      process.env.OPENROUTER_API_KEY = originalOrKey;
+    }
+
+    if (originalFishKey === undefined) {
+      delete process.env.FISH_AUDIO_API_KEY;
+    } else {
+      process.env.FISH_AUDIO_API_KEY = originalFishKey;
+    }
+  });
 
   delete process.env.OPENROUTER_API_KEY;
   delete process.env.FISH_AUDIO_API_KEY;
-  process.env["Hugging-Face-TTS"] = "REDACTED_HUGGING_FACE_TOKEN";
+
+  const testToken = "test-huggingface-token";
+  process.env["Hugging-Face-TTS"] = testToken;
 
   const provider = new FishAudioProvider();
-  const resolvedKey = await provider.resolveApiKey("https://api-inference.huggingface.co/models");
-  assert.equal(resolvedKey, "REDACTED_HUGGING_FACE_TOKEN");
+  const resolvedKey = await provider.resolveApiKey(
+    "https://api-inference.huggingface.co/models",
+  );
 
-  if (originalKey) process.env["Hugging-Face-TTS"] = originalKey;
-  if (originalOrKey) process.env.OPENROUTER_API_KEY = originalOrKey;
+  assert.equal(resolvedKey, testToken);
 });
 
 test("FishAudioProvider resolveModel defaults to fish-audio/s2.1-pro-free:free", async () => {
@@ -229,7 +258,9 @@ test("REQUIREMENT 2 & 4: Missing uploaded audio triggers local reference.wav fal
   assert.ok(resolved.transcript.includes("హాయ్ ఫ్రెండ్స్!"));
   assert.ok(resolved.transcript.includes("మీ లక్ష్యంపై ఫోకస్ పెట్టండి."));
   assert.ok(resolved.transcript.includes("ఆగకుండా ముందుకు సాగండి."));
-  assert.ok(resolved.transcript.includes("మీ కలను నిజం చేసేది ఇంకెవరో కాదు — మీరే!"));
+  assert.ok(
+    resolved.transcript.includes("మీ కలను నిజం చేసేది ఇంకెవరో కాదు — మీరే!"),
+  );
   assert.ok(resolved.dataUri.startsWith("data:audio/wav;base64,"));
 });
 
@@ -266,7 +297,8 @@ test("TASK 7: Correct transcript selection across uploaded vs fallback modes", a
 
 test("REQUIREMENT 3: Missing both references causes an explicit error for custom_clone", async () => {
   const originalEnv = process.env.FISH_AUDIO_DEFAULT_REFERENCE_PATH;
-  process.env.FISH_AUDIO_DEFAULT_REFERENCE_PATH = "/tmp/non-existent-reference-file-path-123.wav";
+  process.env.FISH_AUDIO_DEFAULT_REFERENCE_PATH =
+    "/tmp/non-existent-reference-file-path-123.wav";
 
   try {
     await assert.rejects(
@@ -279,14 +311,16 @@ test("REQUIREMENT 3: Missing both references causes an explicit error for custom
       },
     );
   } finally {
-    if (originalEnv) process.env.FISH_AUDIO_DEFAULT_REFERENCE_PATH = originalEnv;
+    if (originalEnv)
+      process.env.FISH_AUDIO_DEFAULT_REFERENCE_PATH = originalEnv;
     else delete process.env.FISH_AUDIO_DEFAULT_REFERENCE_PATH;
   }
 });
 
 test("REQUIREMENT 5 & 8: Outgoing OpenRouter request contains reference audio and never falls back to generic speech", async () => {
   const provider = new FishAudioProvider();
-  provider.resolveSpeechUrl = async () => "https://openrouter.ai/api/v1/audio/speech";
+  provider.resolveSpeechUrl = async () =>
+    "https://openrouter.ai/api/v1/audio/speech";
   provider.resolveApiKey = async () => "dummy-test-key";
 
   const originalFetch = globalThis.fetch;
@@ -296,7 +330,9 @@ test("REQUIREMENT 5 & 8: Outgoing OpenRouter request contains reference audio an
   globalThis.fetch = async (url, options) => {
     interceptedUrl = url;
     interceptedOptions = options;
-    const dummyAudio = Buffer.from([0xff, 0xfb, 0x90, 0x64, 0x00, 0x00, 0x00, 0x00]);
+    const dummyAudio = Buffer.from([
+      0xff, 0xfb, 0x90, 0x64, 0x00, 0x00, 0x00, 0x00,
+    ]);
     return {
       ok: true,
       status: 200,
@@ -322,7 +358,11 @@ test("REQUIREMENT 5 & 8: Outgoing OpenRouter request contains reference audio an
     assert.equal(Array.isArray(body.input_references), true);
     assert.equal(body.input_references.length, 2);
     assert.equal(body.input_references[0].type, "input_audio");
-    assert.ok(body.input_references[0].input_audio.data.startsWith("data:audio/wav;base64,"));
+    assert.ok(
+      body.input_references[0].input_audio.data.startsWith(
+        "data:audio/wav;base64,",
+      ),
+    );
     assert.equal(body.input_references[1].type, "text");
     assert.equal(body.input_references[1].text, REFERENCE_TEXT);
     assert.equal(result.referenceSource, "local_fallback");
@@ -413,7 +453,8 @@ test("REQUIREMENT 6: Reference data survives controller, use case, and processor
 
 test("FishAudioProvider never falls back to IndicF5 on API error", async () => {
   const provider = new FishAudioProvider();
-  provider.resolveSpeechUrl = async () => "https://openrouter.ai/api/v1/audio/speech";
+  provider.resolveSpeechUrl = async () =>
+    "https://openrouter.ai/api/v1/audio/speech";
   provider.resolveApiKey = async () => "dummy-test-key";
 
   const originalFetch = globalThis.fetch;
@@ -426,7 +467,8 @@ test("FishAudioProvider never falls back to IndicF5 on API error", async () => {
     return {
       ok: false,
       status: 502,
-      text: async () => JSON.stringify({ error: { message: "OpenRouter upstream error" } }),
+      text: async () =>
+        JSON.stringify({ error: { message: "OpenRouter upstream error" } }),
     };
   };
 
@@ -437,7 +479,8 @@ test("FishAudioProvider never falls back to IndicF5 on API error", async () => {
       },
       {
         name: "ProviderError",
-        message: /Fish Audio speech synthesis failed: OpenRouter upstream error/,
+        message:
+          /Fish Audio speech synthesis failed: OpenRouter upstream error/,
       },
     );
     assert.equal(fetchCount, 1);
