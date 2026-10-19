@@ -1,9 +1,11 @@
 import { CaptureLeadUseCase } from "./application/use-cases/capture-lead.usecase.js";
 import { CreatePublicEnquiryUseCase } from "./application/use-cases/create-public-enquiry.usecase.js";
+import { SubmitProjectRequestUseCase } from "./application/use-cases/submit-project-request.usecase.js";
 import { GetOrganizationEnquiriesUseCase } from "./application/use-cases/get-organization-enquiries.usecase.js";
 import { UpdateLeadStatusUseCase } from "./application/use-cases/update-lead-status.usecase.js";
 
 import { createPublicEnquiryController } from "./presentation/controllers/public-enquiry.controller.js";
+import { createPublicProjectRequestController } from "./presentation/controllers/public-project-request.controller.js";
 import { createGetOrganizationEnquiriesController } from "./presentation/controllers/get-organization-enquiries.controller.js";
 import { createUpdateLeadStatusController } from "./presentation/controllers/update-lead-status.controller.js";
 
@@ -14,6 +16,9 @@ export const createLeadModule = ({
   agentRepository,
   conversationRepository,
   projectRepository,
+  projectMemberRepository,
+  organizationRepository,
+  organizationMemberRepository,
   sendLeadToWhatsappUseCase,
   webhookDispatcherService,
 }) => {
@@ -33,6 +38,15 @@ export const createLeadModule = ({
     sendLeadToWhatsappUseCase,
   });
 
+  const submitProjectRequestUseCase = new SubmitProjectRequestUseCase({
+    projectRepository,
+    projectMemberRepository,
+    organizationRepository,
+    organizationMemberRepository,
+    leadRepository,
+    sendLeadToWhatsappUseCase,
+  });
+
   const getOrganizationEnquiriesUseCase = new GetOrganizationEnquiriesUseCase({
     leadRepository,
   });
@@ -43,6 +57,10 @@ export const createLeadModule = ({
 
   const publicEnquiryController = createPublicEnquiryController({
     createPublicEnquiryUseCase,
+  });
+
+  const publicProjectRequestController = createPublicProjectRequestController({
+    submitProjectRequestUseCase,
   });
 
   const getOrganizationEnquiriesController =
@@ -58,9 +76,11 @@ export const createLeadModule = ({
     leadRepository,
     captureLeadUseCase,
     createPublicEnquiryUseCase,
+    submitProjectRequestUseCase,
     getOrganizationEnquiriesUseCase,
     updateLeadStatusUseCase,
     publicEnquiryController,
+    publicProjectRequestController,
     getOrganizationEnquiriesController,
     updateLeadStatusController,
   };

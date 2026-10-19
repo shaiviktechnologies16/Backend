@@ -60,6 +60,7 @@ import createPlatformWhatsappRoutes from "./features/whatsapp/presentation/route
 import { createOrganizationFeatureAccessRoutes } from "./features/platform/organization-feature-access/presentation/routes/organization-feature-access.routes.js";
 import { createWorkspaceFeatureAccessRoutes } from "./features/platform/organization-feature-access/presentation/routes/workspace-feature-access.routes.js";
 import { createPublicEnquiryRoutes } from "./features/lead/presentation/routes/public-enquiry.routes.js";
+import { createPublicProjectRequestRoutes } from "./features/lead/presentation/routes/public-project-request.routes.js";
 import { createOrganizationEnquiriesRoutes } from "./features/lead/presentation/routes/organization-enquiries.routes.js";
 import createAiVideoRoutes from "./features/ai-video/presentation/routes/ai-video.routes.js";
 import {
@@ -208,6 +209,13 @@ app.use(
   "/api/v1/public/enquiries",
   createPublicEnquiryRoutes({
     publicEnquiryController: leadModule.publicEnquiryController,
+  }),
+);
+
+app.use(
+  "/api/v1/public/project-requests",
+  createPublicProjectRequestRoutes({
+    publicProjectRequestController: leadModule.publicProjectRequestController,
   }),
 );
 

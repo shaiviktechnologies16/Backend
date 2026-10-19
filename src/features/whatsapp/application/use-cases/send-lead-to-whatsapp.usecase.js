@@ -156,22 +156,46 @@ export class SendLeadToWhatsappUseCase {
   }
 
   buildMessage(lead) {
-    return [
-      "*NEW ENQUIRY*",
+    const isProjectRequest =
+      lead.source === "WEBSITE_PROJECT_REQUEST" ||
+      Boolean(lead.metadata?.projectType);
+
+    const title = isProjectRequest ? "*NEW PROJECT REQUEST*" : "*NEW ENQUIRY*";
+    const subtitle = isProjectRequest
+      ? "A new project request has been submitted on your website."
+      : "A new enquiry has been captured by your AI Agent.";
+
+    const lines = [
+      title,
       "",
-      "A new enquiry has been captured by your AI Agent.",
+      subtitle,
       "",
-      "*Enquiry Details*",
+      isProjectRequest ? "*Client Details*" : "*Enquiry Details*",
       "",
       `Name        : ${lead.name || "Not provided"}`,
       `Phone       : ${lead.phone || "Not provided"}`,
       `Email       : ${lead.email || "Not provided"}`,
+    ];
+
+    if (lead.metadata?.company) {
+      lines.push(`Company     : ${lead.metadata.company}`);
+    }
+
+    if (lead.metadata?.projectType) {
+      lines.push(`Project Type: ${lead.metadata.projectType}`);
+    }
+
+    lines.push(
       `Requirement : ${lead.requirement || "Not provided"}`,
       "",
-      `Source      : ${lead.source || "AI Agent"}`,
+      `Source      : ${isProjectRequest ? "Website Project Request" : lead.source || "AI Agent"}`,
       `Status      : ${lead.status || "NEW"}`,
       "",
-      "Please follow up with the enquiry.",
-    ].join("\n");
+      isProjectRequest
+        ? "Please follow up with the client."
+        : "Please follow up with the enquiry.",
+    );
+
+    return lines.join("\n");
   }
 }

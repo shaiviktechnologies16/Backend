@@ -307,6 +307,10 @@ const leadModule = createLeadModule({
   agentRepository: agentModule.agentRepository,
   conversationRepository,
   projectRepository,
+  projectMemberRepository,
+  organizationRepository,
+  organizationMemberRepository:
+    organizationMemberModule.organizationMemberRepository,
   sendLeadToWhatsappUseCase: whatsappModule.sendLeadToWhatsappUseCase,
   webhookDispatcherService: webhookModule.webhookDispatcherService,
 });
