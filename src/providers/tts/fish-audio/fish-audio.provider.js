@@ -94,6 +94,29 @@ export function detectAudioMimeFromBuffer(buffer) {
   return null;
 }
 
+/**
+ * Estimates audio duration in seconds from buffer headers (metadata only).
+ */
+export function estimateAudioDuration(buffer, mimeType) {
+  if (!buffer || buffer.length === 0) return null;
+  // WAV: 44-byte header, read sample rate and byte rate
+  if (
+    buffer.length > 44 &&
+    buffer.toString("ascii", 0, 4) === "RIFF" &&
+    buffer.toString("ascii", 8, 12) === "WAVE"
+  ) {
+    const byteRate = buffer.readUInt32LE(28);
+    if (byteRate > 0) {
+      return (buffer.length - 44) / byteRate;
+    }
+  }
+  // MP3: rough estimate assuming standard 128 kbps
+  if (mimeType === "audio/mpeg") {
+    return buffer.length / (128 * 1024 / 8);
+  }
+  return null;
+}
+
 export const REFERENCE_TEXT = `హాయ్ ఫ్రెండ్స్!
 
 మన జీవితంలో చిన్న చిన్న మార్పులే… పెద్ద విజయాలకు కారణం అవుతాయి.
@@ -238,6 +261,8 @@ export async function resolveFishAudioReference(options = {}) {
         ? uploadedTranscript.trim()
         : null;
 
+    const durationSec = estimateAudioDuration(buffer, mimeType);
+
     return {
       source: "uploaded",
       dataUri,
@@ -245,6 +270,7 @@ export async function resolveFishAudioReference(options = {}) {
       byteLength: buffer.length,
       mimeType,
       transcript,
+      durationSec,
     };
   }
 
@@ -283,6 +309,8 @@ export async function resolveFishAudioReference(options = {}) {
   const base64Data = localBuffer.toString("base64");
   const dataUri = `data:${detectedMime};base64,${base64Data}`;
 
+  const durationSec = estimateAudioDuration(localBuffer, detectedMime);
+
   // REQUIREMENT 2: Use the exact REFERENCE_TEXT defined above whenever the local fallback reference.wav is used.
   return {
     source: "local_fallback",
@@ -292,6 +320,7 @@ export async function resolveFishAudioReference(options = {}) {
     byteLength: localBuffer.length,
     mimeType: detectedMime,
     transcript: REFERENCE_TEXT,
+    durationSec,
   };
 }
 
@@ -528,7 +557,7 @@ export class FishAudioProvider extends TTSProvider {
       };
     }
 
-    // REQUIREMENT 6: Safe diagnostic logging
+    // Safe diagnostic logging
     console.log("[FishAudio] Synthesizing speech...", {
       provider: this.name,
       model: isHuggingFace ? "huggingface" : model,
@@ -537,6 +566,8 @@ export class FishAudioProvider extends TTSProvider {
       referenceSource: refInfo ? refInfo.source : "none_unconditioned",
       referenceMimeType: refInfo ? refInfo.mimeType : null,
       referenceByteLength: refInfo ? refInfo.byteLength : 0,
+      referenceDurationSec: refInfo ? refInfo.durationSec : null,
+      referenceAudioDecoded: Boolean(refInfo?.buffer && refInfo.buffer.length > 0),
       hasReferenceTranscript: Boolean(refInfo?.transcript),
       inputReferencesIncluded: inputReferences.length > 0,
     });

@@ -122,6 +122,25 @@ export function createPublicTtsController({
             ? speedNum
             : 1.0;
 
+        const hasRefAudio = Boolean(
+          typeof req.body.referenceAudioBase64 === "string" &&
+            req.body.referenceAudioBase64.trim()
+        );
+        const hasRefText = Boolean(
+          typeof req.body.referenceText === "string" &&
+            req.body.referenceText.trim()
+        );
+
+        console.log("[PublicTTSController] Dispatching synthesis usecase:", {
+          visitorId,
+          textLength: cleanText.length,
+          speed: validSpeed,
+          hasReferenceAudio: hasRefAudio,
+          referenceAudioStringLength: hasRefAudio ? req.body.referenceAudioBase64.length : 0,
+          hasReferenceText: hasRefText,
+          referenceTextLength: hasRefText ? req.body.referenceText.length : 0,
+        });
+
         const result = await synthesizeSpeechUseCase.execute({
           text: cleanText,
           options: {
@@ -143,13 +162,21 @@ export function createPublicTtsController({
         const filename =
           result.filename || `shaivik-voice-${Date.now()}.${result.format || "mp3"}`;
 
+        console.log("[PublicTTSController] Synthesis completed successfully:", {
+          visitorId,
+          voiceSource: result.referenceSource || (hasRefAudio ? "uploaded" : "default"),
+          outputFormat: result.format || "mp3",
+          audioByteLength: result.audio?.length || 0,
+          filename,
+        });
+
         res.setHeader("Content-Type", result.contentType || "audio/mpeg");
         res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
         res.setHeader("x-daily-remaining", String(reservation.visitorRemaining));
         res.setHeader("x-global-remaining", String(reservation.globalRemaining));
         res.setHeader(
           "x-voice-source",
-          result.referenceSource || (req.body?.referenceAudioBase64 ? "uploaded" : "default")
+          result.referenceSource || (hasRefAudio ? "uploaded" : "default")
         );
 
         return res.send(result.audio);
