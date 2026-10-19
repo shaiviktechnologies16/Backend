@@ -1,0 +1,58 @@
+[
+  {
+    "id": "case1_short_script",
+    "condition": "with_reference",
+    "filePath": "/Users/Rakesh/Shaivik-AI/Backend/test_outputs/fish_audio/case1_short_script_with_ref.mp3",
+    "bytes": 37615,
+    "latencyMs": 2749
+  },
+  {
+    "id": "case1_short_script",
+    "condition": "unconditioned",
+    "filePath": "/Users/Rakesh/Shaivik-AI/Backend/test_outputs/fish_audio/case1_short_script_unconditioned.mp3",
+    "bytes": 51408,
+    "latencyMs": 1826
+  },
+  {
+    "id": "case2_long_script",
+    "condition": "with_reference",
+    "filePath": "/Users/Rakesh/Shaivik-AI/Backend/test_outputs/fish_audio/case2_long_script_with_ref.mp3",
+    "bytes": 138343,
+    "latencyMs": 4977
+  },
+  {
+    "id": "case2_long_script",
+    "condition": "unconditioned",
+    "filePath": "/Users/Rakesh/Shaivik-AI/Backend/test_outputs/fish_audio/case2_long_script_unconditioned.mp3",
+    "bytes": 281285,
+    "latencyMs": 8171
+  },
+  {
+    "id": "case3_short_latin",
+    "condition": "with_reference",
+    "filePath": "/Users/Rakesh/Shaivik-AI/Backend/test_outputs/fish_audio/case3_short_latin_with_ref.mp3",
+    "bytes": 35107,
+    "latencyMs": 1975
+  },
+  {
+    "id": "case3_short_latin",
+    "condition": "unconditioned",
+    "filePath": "/Users/Rakesh/Shaivik-AI/Backend/test_outputs/fish_audio/case3_short_latin_unconditioned.mp3",
+    "bytes": 55169,
+    "latencyMs": 1723
+  },
+  {
+    "id": "case4_long_latin",
+    "condition": "with_reference",
+    "filePath": "/Users/Rakesh/Shaivik-AI/Backend/test_outputs/fish_audio/case4_long_latin_with_ref.mp3",
+    "bytes": 117863,
+    "latencyMs": 4193
+  },
+  {
+    "id": "case4_long_latin",
+    "condition": "unconditioned",
+    "filePath": "/Users/Rakesh/Shaivik-AI/Backend/test_outputs/fish_audio/case4_long_latin_unconditioned.mp3",
+    "bytes": 133328,
+    "latencyMs": 4079
+  }
+]

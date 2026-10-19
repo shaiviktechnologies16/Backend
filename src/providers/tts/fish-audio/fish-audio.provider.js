@@ -211,6 +211,39 @@ async function saveFishAudio(audioBuffer, format = "mp3") {
 }
 
 /**
+ * Normalizes and pre-processes Telugu speech input:
+ * 1. Transliterates common Romanized conversational expressions into Telugu Unicode script
+ *    so Fish Audio produces native Telugu phonology rather than an English-accented reading.
+ * 2. Normalizes punctuation spacing to ensure natural clause pauses and intonation.
+ */
+export function normalizeTeluguSpeechInput(text) {
+  if (!text || typeof text !== "string") return "";
+  let clean = text.normalize("NFC").trim();
+
+  const romanizedReplacements = [
+    [/\bnamaskar(am)?\b/gi, "నమస్కారం"],
+    [/\b(meeru|miru)\s+ela\s+unnaru\b/gi, "మీరు ఎలా ఉన్నారు"],
+    [/\bela\s+unnaru\b/gi, "ఎలా ఉన్నారు"],
+    [/\b(dhanyavadamulu|dhanyavadalu)\b/gi, "ధన్యవాదాలు"],
+    [/\bshaivik\s+ai\b/gi, "శైవిక్ ఏఐ"],
+    [/\b(swagatham|swagatam)\b/gi, "స్వాగతం"],
+    [/\bcheppandi\b/gi, "చెప్పండి"],
+    [/\bbagunnara\b/gi, "బాగున్నారా"],
+    [/\bhayi\b/gi, "హాయ్"],
+  ];
+
+  for (const [pattern, replacement] of romanizedReplacements) {
+    clean = clean.replace(pattern, replacement);
+  }
+
+  // Ensure breathing pauses at punctuation marks without running clauses together
+  clean = clean.replace(/\s*([,!?.;])\s*/g, "$1 ");
+  clean = clean.replace(/\s+/g, " ").trim();
+
+  return clean;
+}
+
+/**
  * Resolves the reference audio and transcript in priority order:
  * 1. If user uploaded reference audio, use that exact uploaded file.
  * 2. If user did not upload, use Backend/local-tts/reference.wav (resolved relative to backend project root)
@@ -509,7 +542,7 @@ export class FishAudioProvider extends TTSProvider {
       }
     }
 
-    const cleanText = text.normalize("NFC").trim();
+    const cleanText = normalizeTeluguSpeechInput(text);
     const isHuggingFace =
       speechUrl.includes("huggingface.co") || speechUrl.includes("hf.space");
     const isFishAudioNative = speechUrl.includes("api.fish.audio");

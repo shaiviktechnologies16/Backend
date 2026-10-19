@@ -51,6 +51,25 @@ export function createPublicTtsController({
         });
       }
 
+      const isCustomCloneRequested =
+        req.body?.voiceMode === "custom_clone" ||
+        req.body?.voice_mode === "custom_clone";
+      const hasUploadedAudio = Boolean(
+        typeof req.body?.referenceAudioBase64 === "string" &&
+          req.body.referenceAudioBase64.trim()
+      );
+
+      if (isCustomCloneRequested && !hasUploadedAudio) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: "REFERENCE_AUDIO_REQUIRED",
+            message:
+              "Reference audio is required when custom voice cloning is requested.",
+          },
+        });
+      }
+
       // Validate referenceAudioBase64 if present
       if (
         req.body?.referenceAudioBase64 !== undefined &&
@@ -145,6 +164,7 @@ export function createPublicTtsController({
           text: cleanText,
           options: {
             provider: "fish_audio",
+            voiceMode: req.body?.voiceMode || (hasRefAudio ? "custom_clone" : "studio_preset"),
             speed: validSpeed,
             referenceAudioBase64:
               typeof req.body.referenceAudioBase64 === "string"
@@ -177,6 +197,10 @@ export function createPublicTtsController({
         res.setHeader(
           "x-voice-source",
           result.referenceSource || (hasRefAudio ? "uploaded" : "default")
+        );
+        res.setHeader(
+          "x-voice-mode",
+          hasRefAudio ? "custom_clone" : "studio_preset"
         );
 
         return res.send(result.audio);

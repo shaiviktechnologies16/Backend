@@ -57,6 +57,15 @@ export function createTTSController({ synthesizeSpeechUseCase }) {
           `inline; filename="${result.filename}"`,
         );
 
+        res.setHeader(
+          "x-voice-source",
+          result.referenceSource || (referenceAudio ? "uploaded" : "studio_preset"),
+        );
+        res.setHeader(
+          "x-voice-mode",
+          referenceAudio ? "custom_clone" : "studio_preset",
+        );
+
         res.send(result.audio);
       } catch (error) {
         next(error);
