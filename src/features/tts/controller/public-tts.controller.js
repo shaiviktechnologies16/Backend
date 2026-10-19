@@ -51,6 +51,52 @@ export function createPublicTtsController({
         });
       }
 
+      // Validate referenceAudioBase64 if present
+      if (
+        req.body?.referenceAudioBase64 !== undefined &&
+        req.body?.referenceAudioBase64 !== null
+      ) {
+        if (typeof req.body.referenceAudioBase64 !== "string") {
+          return res.status(400).json({
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: "Reference audio must be a valid Base64 string.",
+            },
+          });
+        }
+
+        const trimmedAudio = req.body.referenceAudioBase64.trim();
+        if (!trimmedAudio) {
+          return res.status(400).json({
+            success: false,
+            error: {
+              code: "VALIDATION_ERROR",
+              message: "Reference audio payload cannot be empty.",
+            },
+          });
+        }
+
+        let rawBase64 = trimmedAudio;
+        if (rawBase64.startsWith("data:")) {
+          const commaIndex = rawBase64.indexOf(",");
+          if (commaIndex !== -1) {
+            rawBase64 = rawBase64.slice(commaIndex + 1);
+          }
+        }
+        const estimatedBytes = Math.floor((rawBase64.length * 3) / 4);
+        if (estimatedBytes > 15 * 1024 * 1024) {
+          return res.status(413).json({
+            success: false,
+            error: {
+              code: "PAYLOAD_TOO_LARGE",
+              message:
+                "Request entity too large. The reference audio upload exceeds the maximum allowed limit of 15 MB.",
+            },
+          });
+        }
+      }
+
       const cleanText = rawText.normalize("NFC").trim();
 
       // 2. Reserve quota slot atomically
@@ -105,9 +151,20 @@ export function createPublicTtsController({
         return res.send(result.audio);
       } catch (err) {
         const isQuotaExhausted = ttsDemoGuardService.isQuotaExhaustionError(err);
+        const isPayloadTooLarge =
+          err.statusCode === 413 ||
+          err.status === 413 ||
+          err.code === "PAYLOAD_TOO_LARGE" ||
+          err.type === "entity.too.large" ||
+          err.name === "PayloadTooLargeError" ||
+          (typeof err.message === "string" &&
+            err.message.toLowerCase().includes("exceeds maximum size limit"));
+
         const statusCode = isQuotaExhausted
           ? 429
-          : err.statusCode || err.status || 500;
+          : isPayloadTooLarge
+            ? 413
+            : err.statusCode || err.status || 500;
 
         ttsDemoGuardService.release(visitorId, {
           success: false,
@@ -116,6 +173,12 @@ export function createPublicTtsController({
           statusCode,
         });
 
+        const errorCode = isQuotaExhausted
+          ? "PROVIDER_QUOTA_EXHAUSTED"
+          : isPayloadTooLarge
+            ? "PAYLOAD_TOO_LARGE"
+            : err.code || err.errorCode || "TTS_SYNTHESIS_FAILED";
+
         const userMessage = isQuotaExhausted
           ? "The AI voice provider daily quota has been exceeded for today. Please try again tomorrow."
           : err.message || "Failed to synthesize speech. Please try again.";
@@ -123,7 +186,7 @@ export function createPublicTtsController({
         return res.status(statusCode).json({
           success: false,
           error: {
-            code: isQuotaExhausted ? "PROVIDER_QUOTA_EXHAUSTED" : "TTS_SYNTHESIS_FAILED",
+            code: errorCode,
             message: userMessage,
           },
         });

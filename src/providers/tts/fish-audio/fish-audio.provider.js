@@ -141,6 +141,7 @@ export function normalizeReferenceAudio(referenceAudioBase64) {
         buffer.length /
         (1024 * 1024)
       ).toFixed(2)} MB).`,
+      { statusCode: 413, errorCode: "PAYLOAD_TOO_LARGE" },
     );
   }
 

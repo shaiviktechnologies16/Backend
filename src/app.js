@@ -61,6 +61,7 @@ import { createOrganizationFeatureAccessRoutes } from "./features/platform/organ
 import { createWorkspaceFeatureAccessRoutes } from "./features/platform/organization-feature-access/presentation/routes/workspace-feature-access.routes.js";
 import { createPublicEnquiryRoutes } from "./features/lead/presentation/routes/public-enquiry.routes.js";
 import { createPublicProjectRequestRoutes } from "./features/lead/presentation/routes/public-project-request.routes.js";
+import { createPublicTTSRoutes } from "./features/tts/routes/public-tts.routes.js";
 import { createOrganizationEnquiriesRoutes } from "./features/lead/presentation/routes/organization-enquiries.routes.js";
 import createAiVideoRoutes from "./features/ai-video/presentation/routes/ai-video.routes.js";
 import {
@@ -131,11 +132,14 @@ const __dirname = path.dirname(__filename);
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 // Global body parser with strict 100kb limit for general application security.
-// Routes handling large payloads (such as /api/v1/tts for reference audio) use route-specific parsers.
+// Routes handling large payloads (such as TTS routes for reference audio) use route-specific parsers.
 app.use((req, res, next) => {
+  const url = req.originalUrl || req.url || req.path || "";
   if (
-    req.originalUrl?.startsWith("/api/v1/tts") ||
-    req.path?.startsWith("/api/v1/tts")
+    url.startsWith("/api/v1/tts") ||
+    url.startsWith("/api/v1/public/tts") ||
+    url.startsWith("/api/public/tts") ||
+    url.startsWith("/api/tts")
   ) {
     return next();
   }
@@ -227,6 +231,13 @@ app.use(
   "/api/v1/public/project-requests",
   createPublicProjectRequestRoutes({
     publicProjectRequestController: leadModule.publicProjectRequestController,
+  }),
+);
+
+app.use(
+  ["/api/v1/public/tts", "/api/public/tts", "/api/tts"],
+  createPublicTTSRoutes({
+    publicTtsController: ttsModule.publicTtsController,
   }),
 );
 

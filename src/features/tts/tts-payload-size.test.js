@@ -337,3 +337,271 @@ test("Controller: accepts IndicF5 options and preserves parameters", async () =>
   assert.equal(capturedOptions.presetVoice, "te-female-1");
   assert.equal(capturedOptions.steps, 8);
 });
+
+test("Public TTS routes: normal text request is accepted on /api/v1/public/tts and /api/tts", async () => {
+  const { createPublicTTSRoutes } = await import("./routes/public-tts.routes.js");
+  const { createPublicTtsController } = await import("./controller/public-tts.controller.js");
+  const { TtsDemoGuardService } = await import("./service/tts-demo-guard.service.js");
+
+  const guard = new TtsDemoGuardService();
+  const mockUseCase = {
+    async execute({ text }) {
+      return {
+        audio: Buffer.from("audio-bytes"),
+        contentType: "audio/mpeg",
+        format: "mp3",
+      };
+    },
+  };
+  const publicTtsController = createPublicTtsController({
+    synthesizeSpeechUseCase: mockUseCase,
+    ttsDemoGuardService: guard,
+  });
+
+  const app = express();
+  // Exact bypass logic as in app.js
+  app.use((req, res, next) => {
+    const url = req.originalUrl || req.url || req.path || "";
+    if (
+      url.startsWith("/api/v1/tts") ||
+      url.startsWith("/api/v1/public/tts") ||
+      url.startsWith("/api/public/tts") ||
+      url.startsWith("/api/tts")
+    ) {
+      return next();
+    }
+    return express.json({ limit: "100kb" })(req, res, next);
+  });
+
+  app.use(
+    ["/api/v1/public/tts", "/api/public/tts", "/api/tts"],
+    createPublicTTSRoutes({ publicTtsController }),
+  );
+  app.use(errorMiddleware);
+
+  const testServer = await startTestServer(app);
+  try {
+    // Test /api/v1/public/tts/generate
+    const res1 = await fetch(`${testServer.url}/api/v1/public/tts/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "Testing public TTS" }),
+    });
+    assert.equal(res1.status, 200);
+
+    // Test direct /api/tts/generate alias
+    const res2 = await fetch(`${testServer.url}/api/tts/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "Testing alias" }),
+    });
+    assert.equal(res2.status, 200);
+  } finally {
+    await testServer.close();
+  }
+});
+
+test("Public TTS routes: reference audio > 100 KB (approx 600 KB payload) bypasses global parser and succeeds", async () => {
+  const { createPublicTTSRoutes } = await import("./routes/public-tts.routes.js");
+  const { createPublicTtsController } = await import("./controller/public-tts.controller.js");
+  const { TtsDemoGuardService } = await import("./service/tts-demo-guard.service.js");
+
+  let receivedAudio = null;
+  const guard = new TtsDemoGuardService();
+  const mockUseCase = {
+    async execute({ text, options }) {
+      receivedAudio = options.referenceAudioBase64;
+      return {
+        audio: Buffer.from("cloned-audio-bytes"),
+        contentType: "audio/mpeg",
+        format: "mp3",
+      };
+    },
+  };
+  const publicTtsController = createPublicTtsController({
+    synthesizeSpeechUseCase: mockUseCase,
+    ttsDemoGuardService: guard,
+  });
+
+  const app = express();
+  app.use((req, res, next) => {
+    const url = req.originalUrl || req.url || req.path || "";
+    if (
+      url.startsWith("/api/v1/tts") ||
+      url.startsWith("/api/v1/public/tts") ||
+      url.startsWith("/api/public/tts") ||
+      url.startsWith("/api/tts")
+    ) {
+      return next();
+    }
+    return express.json({ limit: "100kb" })(req, res, next);
+  });
+
+  app.use(
+    ["/api/v1/public/tts", "/api/public/tts", "/api/tts"],
+    createPublicTTSRoutes({ publicTtsController }),
+  );
+  app.use(errorMiddleware);
+
+  const testServer = await startTestServer(app);
+  try {
+    // Generate ~600 KB Base64 audio payload
+    const largeAudioBase64 = Buffer.alloc(450 * 1024, "A").toString("base64");
+    assert.ok(largeAudioBase64.length > 500000);
+
+    const res = await fetch(`${testServer.url}/api/tts/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: "Custom clone audio test",
+        referenceAudioBase64: `data:audio/wav;base64,${largeAudioBase64}`,
+      }),
+    });
+
+    assert.equal(res.status, 200);
+    assert.ok(receivedAudio);
+    assert.ok(receivedAudio.length > 500000);
+  } finally {
+    await testServer.close();
+  }
+});
+
+test("Public TTS routes: oversized payload (> limit) returns clean HTTP 413 with PAYLOAD_TOO_LARGE", async () => {
+  const originalLimit = process.env.PUBLIC_TTS_MAX_BODY_SIZE;
+  process.env.PUBLIC_TTS_MAX_BODY_SIZE = "50kb";
+
+  const { createPublicTTSRoutes } = await import("./routes/public-tts.routes.js");
+  const { createPublicTtsController } = await import("./controller/public-tts.controller.js");
+  const { TtsDemoGuardService } = await import("./service/tts-demo-guard.service.js");
+
+  const guard = new TtsDemoGuardService();
+  const mockUseCase = {
+    async execute() {
+      return { audio: Buffer.from("audio"), contentType: "audio/mpeg" };
+    },
+  };
+  const publicTtsController = createPublicTtsController({
+    synthesizeSpeechUseCase: mockUseCase,
+    ttsDemoGuardService: guard,
+  });
+
+  const app = express();
+  app.use((req, res, next) => {
+    const url = req.originalUrl || req.url || req.path || "";
+    if (
+      url.startsWith("/api/v1/tts") ||
+      url.startsWith("/api/v1/public/tts") ||
+      url.startsWith("/api/public/tts") ||
+      url.startsWith("/api/tts")
+    ) {
+      return next();
+    }
+    return express.json({ limit: "100kb" })(req, res, next);
+  });
+
+  app.use(
+    ["/api/v1/public/tts", "/api/public/tts", "/api/tts"],
+    createPublicTTSRoutes({ publicTtsController }),
+  );
+  app.use(errorMiddleware);
+
+  const testServer = await startTestServer(app);
+  try {
+    const bigPayload = "X".repeat(70 * 1024);
+    const res = await fetch(`${testServer.url}/api/tts/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "Hello", referenceAudioBase64: bigPayload }),
+    });
+
+    assert.equal(res.status, 413);
+    const data = await res.json();
+    assert.equal(data.success, false);
+    assert.equal(data.error.code, "PAYLOAD_TOO_LARGE");
+    assert.match(data.error.message, /exceeds the maximum allowed limit/);
+  } finally {
+    if (originalLimit) process.env.PUBLIC_TTS_MAX_BODY_SIZE = originalLimit;
+    else delete process.env.PUBLIC_TTS_MAX_BODY_SIZE;
+    await testServer.close();
+  }
+});
+
+test("Public TTS routes: reference audio > 15 MB decoded size is rejected with HTTP 413", async () => {
+  const { createPublicTtsController } = await import("./controller/public-tts.controller.js");
+  const { TtsDemoGuardService } = await import("./service/tts-demo-guard.service.js");
+
+  const guard = new TtsDemoGuardService();
+  const mockUseCase = {
+    async execute() {
+      return { audio: Buffer.from("audio"), contentType: "audio/mpeg" };
+    },
+  };
+  const controller = createPublicTtsController({
+    synthesizeSpeechUseCase: mockUseCase,
+    ttsDemoGuardService: guard,
+  });
+
+  const fakeBase64Length = Math.ceil((16 * 1024 * 1024 * 4) / 3);
+  const oversizedBase64 = "A".repeat(fakeBase64Length);
+
+  let responseStatus = null;
+  let responseData = null;
+  const mockRes = {
+    status(s) {
+      responseStatus = s;
+      return this;
+    },
+    json(d) {
+      responseData = d;
+      return this;
+    },
+  };
+
+  await controller.synthesize(
+    {
+      headers: { "x-visitor-id": "visitor-oversized" },
+      body: { text: "Hello world", referenceAudioBase64: oversizedBase64 },
+    },
+    mockRes,
+  );
+
+  assert.equal(responseStatus, 413);
+  assert.equal(responseData.success, false);
+  assert.equal(responseData.error.code, "PAYLOAD_TOO_LARGE");
+  assert.match(responseData.error.message, /15 MB/);
+});
+
+test("Global security preserved: non-TTS route with > 100 KB payload is blocked by global parser", async () => {
+  const app = express();
+  app.use((req, res, next) => {
+    const url = req.originalUrl || req.url || req.path || "";
+    if (
+      url.startsWith("/api/v1/tts") ||
+      url.startsWith("/api/v1/public/tts") ||
+      url.startsWith("/api/public/tts") ||
+      url.startsWith("/api/tts")
+    ) {
+      return next();
+    }
+    return express.json({ limit: "100kb" })(req, res, next);
+  });
+
+  app.post("/api/other/data", (req, res) => res.json({ success: true }));
+  app.use(errorMiddleware);
+
+  const testServer = await startTestServer(app);
+  try {
+    const bigPayload = "X".repeat(120 * 1024);
+    const res = await fetch(`${testServer.url}/api/other/data`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ data: bigPayload }),
+    });
+
+    assert.equal(res.status, 413);
+    const data = await res.json();
+    assert.equal(data.error.code, "PAYLOAD_TOO_LARGE");
+  } finally {
+    await testServer.close();
+  }
+});
