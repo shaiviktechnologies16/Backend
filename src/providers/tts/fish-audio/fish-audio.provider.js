@@ -200,6 +200,12 @@ export async function resolveFishAudioReference(options = {}) {
     return null;
   }
 
+  const isCloningRequested = Boolean(
+    options.referenceAudioBase64 !== undefined ||
+    options.reference_audio_base64 !== undefined ||
+    options.referenceAudio !== undefined
+  );
+
   const uploadedAudio =
     options.referenceAudioBase64 ||
     options.reference_audio_base64 ||
@@ -208,12 +214,15 @@ export async function resolveFishAudioReference(options = {}) {
   const uploadedTranscript =
     options.referenceText || options.reference_text || null;
 
-  // 1. If the user uploaded a reference audio file for voice cloning, use that exact uploaded file.
-  if (
-    uploadedAudio &&
-    typeof uploadedAudio === "string" &&
-    uploadedAudio.trim()
-  ) {
+  // 1. If the user explicitly requested custom voice cloning:
+  if (isCloningRequested) {
+    if (!uploadedAudio || typeof uploadedAudio !== "string" || !uploadedAudio.trim()) {
+      throw new ProviderError(
+        "Reference audio payload cannot be empty when custom voice cloning is requested.",
+        { statusCode: 400, errorCode: "INVALID_REFERENCE_AUDIO" }
+      );
+    }
+
     const dataUri = normalizeReferenceAudio(uploadedAudio);
     const cleanBase64 = uploadedAudio
       .replace(/^data:[^;]+;base64,/, "")

@@ -147,6 +147,10 @@ export function createPublicTtsController({
         res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
         res.setHeader("x-daily-remaining", String(reservation.visitorRemaining));
         res.setHeader("x-global-remaining", String(reservation.globalRemaining));
+        res.setHeader(
+          "x-voice-source",
+          result.referenceSource || (req.body?.referenceAudioBase64 ? "uploaded" : "default")
+        );
 
         return res.send(result.audio);
       } catch (err) {
