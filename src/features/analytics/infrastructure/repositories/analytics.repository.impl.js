@@ -10,49 +10,18 @@ export class AnalyticsRepositoryImpl extends AnalyticsRepository {
     const manager = this.dataSource.manager;
 
     if (scope.type === "PLATFORM") {
-      const [
-        organizations,
-        users,
-        projects,
-        agents,
-        conversations,
-        messages,
-        usage,
-      ] = await Promise.all([
-        manager.query(`
-        SELECT COUNT(*)::int AS count
-        FROM organizations
-        WHERE deleted_at IS NULL
-      `),
+      const counts = await manager.query(`
+        SELECT
+          (SELECT COUNT(*)::int FROM organizations WHERE deleted_at IS NULL) AS organizations,
+          (SELECT COUNT(*)::int FROM users WHERE is_active = true) AS users,
+          (SELECT COUNT(*)::int FROM projects WHERE deleted_at IS NULL) AS projects,
+          (SELECT COUNT(*)::int FROM agents) AS agents,
+          (SELECT COUNT(*)::int FROM conversations) AS conversations,
+          (SELECT COUNT(*)::int FROM messages) AS messages,
+          (SELECT COUNT(DISTINCT user_id)::int FROM conversations WHERE user_id IS NOT NULL) AS "activeUsers"
+      `);
 
-        manager.query(`
-        SELECT COUNT(*)::int AS count
-        FROM users
-        WHERE is_active = true
-      `),
-
-        manager.query(`
-        SELECT COUNT(*)::int AS count
-        FROM projects
-        WHERE deleted_at IS NULL
-      `),
-
-        manager.query(`
-        SELECT COUNT(*)::int AS count
-        FROM agents
-      `),
-
-        manager.query(`
-        SELECT COUNT(*)::int AS count
-        FROM conversations
-      `),
-
-        manager.query(`
-        SELECT COUNT(*)::int AS count
-        FROM messages
-      `),
-
-        manager.query(`
+      const usage = await manager.query(`
         SELECT
           COUNT(*)::int AS requests,
           COALESCE(SUM(input_tokens), 0)::int AS "inputTokens",
@@ -61,124 +30,106 @@ export class AnalyticsRepositoryImpl extends AnalyticsRepository {
           COALESCE(AVG(response_time_ms), 0)::int AS "averageResponseTimeMs"
         FROM usage
         WHERE status = 'SUCCESS'
-      `),
-      ]);
+      `);
+
+      const c = counts[0] || {};
+      const u = usage[0] || {};
 
       return {
-        organizations: organizations[0].count,
-        users: users[0].count,
-        projects: projects[0].count,
-        agents: agents[0].count,
-        conversations: conversations[0].count,
-        messages: messages[0].count,
-        activeUsers: await this.getPlatformActiveUsers(),
+        organizations: c.organizations ?? 0,
+        users: c.users ?? 0,
+        projects: c.projects ?? 0,
+        agents: c.agents ?? 0,
+        conversations: c.conversations ?? 0,
+        messages: c.messages ?? 0,
+        activeUsers: c.activeUsers ?? 0,
 
-        requests: usage[0].requests,
-        inputTokens: usage[0].inputTokens,
-        outputTokens: usage[0].outputTokens,
-        totalTokens: usage[0].totalTokens,
-        averageResponseTimeMs: usage[0].averageResponseTimeMs,
+        requests: u.requests ?? 0,
+        inputTokens: u.inputTokens ?? 0,
+        outputTokens: u.outputTokens ?? 0,
+        totalTokens: u.totalTokens ?? 0,
+        averageResponseTimeMs: u.averageResponseTimeMs ?? 0,
       };
     }
 
     const organizationId = scope.organizationId;
 
-    const [projects, agents, conversations, messages, activeUsers, usage] =
-      await Promise.all([
-        manager.query(
-          `
-        SELECT COUNT(*)::int AS count
-        FROM projects
-        WHERE organization_id = $1
-          AND deleted_at IS NULL
-      `,
-          [organizationId],
-        ),
+    const counts = await manager.query(
+      `
+      SELECT
+        (
+          SELECT COUNT(*)::int
+          FROM projects
+          WHERE organization_id = $1
+            AND deleted_at IS NULL
+        ) AS projects,
+        (
+          SELECT COUNT(*)::int
+          FROM agents a
+          INNER JOIN projects p ON p.id = a.project_id
+          WHERE p.organization_id = $1
+            AND p.deleted_at IS NULL
+        ) AS agents,
+        (
+          SELECT COUNT(*)::int
+          FROM conversations c
+          INNER JOIN projects p ON p.id = c.project_id
+          WHERE p.organization_id = $1
+            AND p.deleted_at IS NULL
+        ) AS conversations,
+        (
+          SELECT COUNT(*)::int
+          FROM messages m
+          INNER JOIN conversations c ON c.id = m.conversation_id
+          INNER JOIN projects p ON p.id = c.project_id
+          WHERE p.organization_id = $1
+            AND p.deleted_at IS NULL
+        ) AS messages,
+        (
+          SELECT COUNT(DISTINCT c.user_id)::int
+          FROM conversations c
+          INNER JOIN projects p ON p.id = c.project_id
+          WHERE p.organization_id = $1
+            AND p.deleted_at IS NULL
+            AND c.user_id IS NOT NULL
+        ) AS "activeUsers"
+    `,
+      [organizationId],
+    );
 
-        manager.query(
-          `
-        SELECT COUNT(*)::int AS count
-        FROM agents a
-        INNER JOIN projects p
-          ON p.id = a.project_id
-        WHERE p.organization_id = $1
-          AND p.deleted_at IS NULL
-      `,
-          [organizationId],
-        ),
+    const usage = await manager.query(
+      `
+      SELECT
+        COUNT(*)::int AS requests,
+        COALESCE(SUM(u.input_tokens), 0)::int AS "inputTokens",
+        COALESCE(SUM(u.output_tokens), 0)::int AS "outputTokens",
+        COALESCE(SUM(u.total_tokens), 0)::int AS "totalTokens",
+        COALESCE(AVG(u.response_time_ms), 0)::int AS "averageResponseTimeMs"
+      FROM usage u
+      INNER JOIN agents a ON a.id = u.agent_id
+      INNER JOIN projects p ON p.id = a.project_id
+      WHERE p.organization_id = $1
+        AND p.deleted_at IS NULL
+        AND u.status = 'SUCCESS'
+    `,
+      [organizationId],
+    );
 
-        manager.query(
-          `
-        SELECT COUNT(*)::int AS count
-        FROM conversations c
-        INNER JOIN projects p
-          ON p.id = c.project_id
-        WHERE p.organization_id = $1
-          AND p.deleted_at IS NULL
-      `,
-          [organizationId],
-        ),
-
-        manager.query(
-          `
-        SELECT COUNT(*)::int AS count
-        FROM messages m
-        INNER JOIN conversations c
-          ON c.id = m.conversation_id
-        INNER JOIN projects p
-          ON p.id = c.project_id
-        WHERE p.organization_id = $1
-          AND p.deleted_at IS NULL
-      `,
-          [organizationId],
-        ),
-
-        manager.query(
-          `
-        SELECT COUNT(DISTINCT c.user_id)::int AS count
-        FROM conversations c
-        INNER JOIN projects p
-          ON p.id = c.project_id
-        WHERE p.organization_id = $1
-          AND p.deleted_at IS NULL
-          AND c.user_id IS NOT NULL
-      `,
-          [organizationId],
-        ),
-
-        manager.query(
-          `
-        SELECT
-          COUNT(*)::int AS requests,
-          COALESCE(SUM(u.input_tokens), 0)::int AS "inputTokens",
-          COALESCE(SUM(u.output_tokens), 0)::int AS "outputTokens",
-          COALESCE(SUM(u.total_tokens), 0)::int AS "totalTokens",
-          COALESCE(AVG(u.response_time_ms), 0)::int AS "averageResponseTimeMs"
-        FROM usage u
-        INNER JOIN agents a
-          ON a.id = u.agent_id
-        INNER JOIN projects p
-          ON p.id = a.project_id
-        WHERE p.organization_id = $1
-          AND p.deleted_at IS NULL
-          AND u.status = 'SUCCESS'
-      `,
-          [organizationId],
-        ),
-      ]);
+    const c = counts[0] || {};
+    const u = usage[0] || {};
 
     return {
-      projects: projects[0].count,
-      agents: agents[0].count,
-      conversations: conversations[0].count,
-      messages: messages[0].count,
-      activeUsers: activeUsers[0].count,
+      projects: c.projects ?? 0,
+      agents: c.agents ?? 0,
+      conversations: c.conversations ?? 0,
+      messages: c.messages ?? 0,
+      activeUsers: c.activeUsers ?? 0,
 
-      requests: usage[0].requests,
-      inputTokens: usage[0].inputTokens,
-      outputTokens: usage[0].outputTokens,
-      totalTokens: usage[0].totalTokens,
-      averageResponseTimeMs: usage[0].averageResponseTimeMs,
+      requests: u.requests ?? 0,
+      inputTokens: u.inputTokens ?? 0,
+      outputTokens: u.outputTokens ?? 0,
+      totalTokens: u.totalTokens ?? 0,
+      averageResponseTimeMs: u.averageResponseTimeMs ?? 0,
     };
   }
 
@@ -204,66 +155,7 @@ export class AnalyticsRepositoryImpl extends AnalyticsRepository {
       }[interval] ?? "day";
 
     if (scope.type === "PLATFORM") {
-      const [usage, conversations, activeUsers] = await Promise.all([
-        manager.query(
-          `
-          SELECT
-            date_trunc('${dateTrunc}', u.created_at) AS date,
-            COUNT(*)::int AS requests,
-            COALESCE(SUM(u.input_tokens), 0)::int AS "inputTokens",
-            COALESCE(SUM(u.output_tokens), 0)::int AS "outputTokens",
-            COALESCE(SUM(u.total_tokens), 0)::int AS "totalTokens"
-          FROM usage u
-          WHERE u.status = 'SUCCESS'
-            AND u.created_at >= $1
-            AND u.created_at < $2
-          GROUP BY 1
-          ORDER BY 1
-        `,
-          [from, to],
-        ),
-
-        manager.query(
-          `
-          SELECT
-            date_trunc('${dateTrunc}', c.created_at) AS date,
-            COUNT(*)::int AS count
-          FROM conversations c
-          WHERE c.created_at >= $1
-            AND c.created_at < $2
-          GROUP BY 1
-          ORDER BY 1
-        `,
-          [from, to],
-        ),
-
-        manager.query(
-          `
-          SELECT
-            date_trunc('${dateTrunc}', c.created_at) AS date,
-            COUNT(DISTINCT c.user_id)::int AS count
-          FROM conversations c
-          WHERE c.created_at >= $1
-            AND c.created_at < $2
-            AND c.user_id IS NOT NULL
-          GROUP BY 1
-          ORDER BY 1
-        `,
-          [from, to],
-        ),
-      ]);
-
-      return {
-        usage,
-        conversations,
-        activeUsers,
-      };
-    }
-
-    const organizationId = scope.organizationId;
-
-    const [usage, conversations, activeUsers] = await Promise.all([
-      manager.query(
+      const usage = await manager.query(
         `
         SELECT
           date_trunc('${dateTrunc}', u.created_at) AS date,
@@ -272,63 +164,118 @@ export class AnalyticsRepositoryImpl extends AnalyticsRepository {
           COALESCE(SUM(u.output_tokens), 0)::int AS "outputTokens",
           COALESCE(SUM(u.total_tokens), 0)::int AS "totalTokens"
         FROM usage u
-        INNER JOIN agents a
-          ON a.id = u.agent_id
-        INNER JOIN projects p
-          ON p.id = a.project_id
-        WHERE p.organization_id = $1
-          AND p.deleted_at IS NULL
-          AND u.status = 'SUCCESS'
-          AND u.created_at >= $2
-          AND u.created_at < $3
+        WHERE u.status = 'SUCCESS'
+          AND u.created_at >= $1
+          AND u.created_at < $2
         GROUP BY 1
         ORDER BY 1
       `,
-        [organizationId, from, to],
-      ),
+        [from, to],
+      );
 
-      manager.query(
+      const conversations = await manager.query(
         `
         SELECT
           date_trunc('${dateTrunc}', c.created_at) AS date,
           COUNT(*)::int AS count
         FROM conversations c
-        INNER JOIN projects p
-          ON p.id = c.project_id
-        WHERE p.organization_id = $1
-          AND p.deleted_at IS NULL
-          AND c.created_at >= $2
-          AND c.created_at < $3
+        WHERE c.created_at >= $1
+          AND c.created_at < $2
         GROUP BY 1
         ORDER BY 1
       `,
-        [organizationId, from, to],
-      ),
+        [from, to],
+      );
 
-      manager.query(
+      const activeUsers = await manager.query(
         `
         SELECT
           date_trunc('${dateTrunc}', c.created_at) AS date,
           COUNT(DISTINCT c.user_id)::int AS count
         FROM conversations c
-        INNER JOIN projects p
-          ON p.id = c.project_id
-        WHERE p.organization_id = $1
-          AND p.deleted_at IS NULL
-          AND c.created_at >= $2
-          AND c.created_at < $3
+        WHERE c.created_at >= $1
+          AND c.created_at < $2
           AND c.user_id IS NOT NULL
         GROUP BY 1
         ORDER BY 1
       `,
-        [organizationId, from, to],
-      ),
-    ]);
+        [from, to],
+      );
+
+      return {
+        usage: usage || [],
+        conversations: conversations || [],
+        activeUsers: activeUsers || [],
+      };
+    }
+
+    const organizationId = scope.organizationId;
+
+    const usage = await manager.query(
+      `
+      SELECT
+        date_trunc('${dateTrunc}', u.created_at) AS date,
+        COUNT(*)::int AS requests,
+        COALESCE(SUM(u.input_tokens), 0)::int AS "inputTokens",
+        COALESCE(SUM(u.output_tokens), 0)::int AS "outputTokens",
+        COALESCE(SUM(u.total_tokens), 0)::int AS "totalTokens"
+      FROM usage u
+      INNER JOIN agents a
+        ON a.id = u.agent_id
+      INNER JOIN projects p
+        ON p.id = a.project_id
+      WHERE p.organization_id = $1
+        AND p.deleted_at IS NULL
+        AND u.status = 'SUCCESS'
+        AND u.created_at >= $2
+        AND u.created_at < $3
+      GROUP BY 1
+      ORDER BY 1
+    `,
+      [organizationId, from, to],
+    );
+
+    const conversations = await manager.query(
+      `
+      SELECT
+        date_trunc('${dateTrunc}', c.created_at) AS date,
+        COUNT(*)::int AS count
+      FROM conversations c
+      INNER JOIN projects p
+        ON p.id = c.project_id
+      WHERE p.organization_id = $1
+        AND p.deleted_at IS NULL
+        AND c.created_at >= $2
+        AND c.created_at < $3
+      GROUP BY 1
+      ORDER BY 1
+    `,
+      [organizationId, from, to],
+    );
+
+    const activeUsers = await manager.query(
+      `
+      SELECT
+        date_trunc('${dateTrunc}', c.created_at) AS date,
+        COUNT(DISTINCT c.user_id)::int AS count
+      FROM conversations c
+      INNER JOIN projects p
+        ON p.id = c.project_id
+      WHERE p.organization_id = $1
+        AND p.deleted_at IS NULL
+        AND c.created_at >= $2
+        AND c.created_at < $3
+        AND c.user_id IS NOT NULL
+      GROUP BY 1
+      ORDER BY 1
+    `,
+      [organizationId, from, to],
+    );
 
     return {
-      usage,
-      conversations,
-      activeUsers,
+      usage: usage || [],
+      conversations: conversations || [],
+      activeUsers: activeUsers || [],
     };
   }
 

@@ -1,3 +1,5 @@
+import { AppError } from "../../../../common/errors/AppError.js";
+
 export class AnalyticsController {
   constructor({
     getAnalyticsOverviewUseCase,
@@ -136,11 +138,10 @@ export class AnalyticsController {
       };
     }
 
-    const error = new Error("Organization context is required.");
-
-    error.statusCode = 400;
-    error.code = "ORGANIZATION_CONTEXT_REQUIRED";
-
-    throw error;
+    throw new AppError(
+      "Organization context is required.",
+      400,
+      "ORGANIZATION_CONTEXT_REQUIRED",
+    );
   }
 }

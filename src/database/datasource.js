@@ -92,8 +92,14 @@ export const AppDataSource = new DataSource({
   synchronize: false,
   logging: true,
   extra: {
-    max: Number(process.env.DB_POOL_MAX || 25),
-    connectionTimeoutMillis: 10000,
+    max: Number(process.env.DB_POOL_MAX || 3),
+    connectionTimeoutMillis: Number(
+      process.env.DB_POOL_CONNECTION_TIMEOUT_MS || 10000,
+    ),
+    idleTimeoutMillis: Number(
+      process.env.DB_POOL_IDLE_TIMEOUT_MS || 15000,
+    ),
+    allowExitOnIdle: true,
   },
 
   entities: [
@@ -148,3 +154,34 @@ export const AppDataSource = new DataSource({
 
   migrations: [path.join(__dirname, "migrations/*.js")],
 });
+
+export function getPoolDiagnostics(dataSource = AppDataSource) {
+  const pool = dataSource.driver?.master;
+  const configuredMax = Number(process.env.DB_POOL_MAX || 3);
+  if (!pool) {
+    return {
+      initialized: false,
+      totalCount: 0,
+      idleCount: 0,
+      waitingCount: 0,
+      maxLimit: configuredMax,
+    };
+  }
+  return {
+    initialized: Boolean(dataSource.isInitialized),
+    totalCount: typeof pool.totalCount === "number" ? pool.totalCount : 0,
+    idleCount: typeof pool.idleCount === "number" ? pool.idleCount : 0,
+    waitingCount: typeof pool.waitingCount === "number" ? pool.waitingCount : 0,
+    maxLimit: configuredMax,
+  };
+}
+
+export function registerPoolDiagnostics(dataSource = AppDataSource) {
+  const pool = dataSource.driver?.master;
+  if (pool && !pool._hasDiagnosticsAttached) {
+    pool._hasDiagnosticsAttached = true;
+    pool.on("error", (err) => {
+      console.error("[DatabasePool] Unexpected idle client error:", err?.message || err);
+    });
+  }
+}

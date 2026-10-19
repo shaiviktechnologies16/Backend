@@ -106,6 +106,7 @@ import {
 } from "./container/services.js";
 import { errorMiddleware } from "./common/middleware/error.middleware.js";
 import { createEntitlementMiddleware } from "./common/middleware/entitlement.middleware.js";
+import { getPoolDiagnostics } from "./database/datasource.js";
 
 const app = express();
 app.set("trust proxy", true);
@@ -174,9 +175,19 @@ app.get(["/analytics.js", "/public/analytics.js"], (req, res) => {
 });
 
 app.get("/health", (req, res) => {
+  const pool = getPoolDiagnostics();
   res.status(200).json({
     success: true,
     status: "healthy",
+    database: {
+      status: pool.initialized ? "connected" : "disconnected",
+      pool: {
+        total: pool.totalCount,
+        idle: pool.idleCount,
+        waiting: pool.waitingCount,
+        max: pool.maxLimit,
+      },
+    },
   });
 });
 

@@ -29,6 +29,31 @@ export const errorMiddleware = (error, req, res, next) => {
     });
   }
 
+  // Handle PostgreSQL connection exhaustion or pool checkout timeout
+  if (
+    error?.code === "53300" ||
+    error?.code === "53400" ||
+    error?.code === "57P01" ||
+    error?.message?.includes("Connection terminated") ||
+    error?.message?.includes("timeout exceeded when connecting") ||
+    error?.message?.includes("remaining connection slots are reserved")
+  ) {
+    console.error("[DatabasePool] Connection error or exhaustion:", {
+      requestId: req.requestId ?? null,
+      route: req.originalUrl || req.url,
+      code: error.code,
+      message: error.message,
+    });
+    return res.status(503).json({
+      success: false,
+      error: {
+        code: "DATABASE_UNAVAILABLE",
+        message:
+          "The database service is temporarily busy. Please try again shortly.",
+      },
+    });
+  }
+
   console.error("[Server] UNHANDLED_ERROR", {
     requestId: req.requestId ?? null,
     route: req.originalUrl || req.url,

@@ -149,7 +149,7 @@ describe("FEATURE 2: Daily Conversation Closure & Timezone Boundaries", () => {
       title: "Today AI",
       isCompleted: false,
       isHandover: false,
-      updatedAt: new Date("2026-10-18T05:00:00.000Z"), // today, not eligible
+      updatedAt: new Date(), // today, not eligible
     });
 
     const store = [convOldAiActive, convOldHumanActive, convTodayAiActive];

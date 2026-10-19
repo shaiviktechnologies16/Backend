@@ -14,7 +14,11 @@ export class AnalyticsService {
 
     if (type === "WORKSPACE") {
       if (!organizationId) {
-        throw new Error("Organization ID is required for workspace analytics.");
+        throw new AppError(
+          "Organization ID is required for workspace analytics.",
+          400,
+          "ORGANIZATION_ID_REQUIRED",
+        );
       }
 
       return {
@@ -23,7 +27,7 @@ export class AnalyticsService {
       };
     }
 
-    throw new Error("Invalid analytics scope.");
+    throw new AppError("Invalid analytics scope.", 400, "INVALID_ANALYTICS_SCOPE");
   }
 
   resolveDateRange({ from, to }) {
@@ -34,15 +38,19 @@ export class AnalyticsService {
       : new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000);
 
     if (Number.isNaN(start.getTime())) {
-      throw new Error("Invalid analytics 'from' date.");
+      throw new AppError("Invalid analytics 'from' date.", 400, "INVALID_ANALYTICS_DATE");
     }
 
     if (Number.isNaN(end.getTime())) {
-      throw new Error("Invalid analytics 'to' date.");
+      throw new AppError("Invalid analytics 'to' date.", 400, "INVALID_ANALYTICS_DATE");
     }
 
     if (start >= end) {
-      throw new Error("Analytics 'from' date must be before 'to' date.");
+      throw new AppError(
+        "Analytics 'from' date must be before 'to' date.",
+        400,
+        "INVALID_ANALYTICS_DATE_RANGE",
+      );
     }
 
     return {
@@ -77,7 +85,11 @@ export class AnalyticsService {
     const parsedLimit = Number(limit);
 
     if (!Number.isInteger(parsedLimit) || parsedLimit <= 0) {
-      throw new Error("Analytics limit must be a positive integer.");
+      throw new AppError(
+        "Analytics limit must be a positive integer.",
+        400,
+        "INVALID_ANALYTICS_LIMIT",
+      );
     }
 
     return Math.min(parsedLimit, 100);

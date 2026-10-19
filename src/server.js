@@ -2,15 +2,18 @@ import "dotenv/config";
 
 import app from "./app.js";
 import { appConfig } from "./config/index.js";
-import { AppDataSource } from "./database/datasource.js";
+import { AppDataSource, registerPoolDiagnostics } from "./database/datasource.js";
 import { connectRedis } from "./infrastructure/redis/redis.client.js";
 import { dailyClosureScheduler } from "./container/services.js";
 
 const { port, name, version } = appConfig;
 
+let isShuttingDown = false;
+
 async function bootstrap() {
   try {
     await AppDataSource.initialize();
+    registerPoolDiagnostics(AppDataSource);
     console.log("✅ PostgreSQL connected");
 
     if (process.env.RUN_MIGRATIONS !== "false") {
@@ -30,7 +33,7 @@ async function bootstrap() {
       console.warn("ℹ️ Server running with local concurrency fallback.");
     }
 
-    app.listen(port, "0.0.0.0", () => {
+    const server = app.listen(port, "0.0.0.0", () => {
       console.log(`${name} v${version} is running on port ${port}`);
       try {
         dailyClosureScheduler.start();
@@ -38,6 +41,36 @@ async function bootstrap() {
         console.warn("⚠️ Failed to start daily closure scheduler:", schedErr?.message || schedErr);
       }
     });
+
+    const gracefulShutdown = async (signal) => {
+      if (isShuttingDown) return;
+      isShuttingDown = true;
+      console.log(`\n🛑 Received ${signal}. Starting graceful shutdown...`);
+
+      server.close(async () => {
+        console.log("🔒 HTTP server closed.");
+        try {
+          if (dailyClosureScheduler?.stop) {
+            dailyClosureScheduler.stop();
+          }
+          if (AppDataSource.isInitialized) {
+            await AppDataSource.destroy();
+            console.log("🔌 PostgreSQL DataSource destroyed cleanly.");
+          }
+        } catch (err) {
+          console.error("⚠️ Error during database disconnect:", err?.message || err);
+        }
+        process.exit(0);
+      });
+
+      setTimeout(() => {
+        console.error("⚠️ Forcing shutdown after timeout.");
+        process.exit(1);
+      }, 10000).unref();
+    };
+
+    process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+    process.on("SIGINT", () => gracefulShutdown("SIGINT"));
   } catch (error) {
     console.error("❌ Failed to start application");
     console.error(error);
