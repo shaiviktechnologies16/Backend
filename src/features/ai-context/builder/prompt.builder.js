@@ -19,6 +19,17 @@ const SUPPORT_AND_LEAD_GUIDELINES = `Support Handover & Lead Capture Guidelines:
 - Platform Capability: Shaivik Technologies HAS an integrated lead-capture and human handover system. NEVER claim that you "cannot capture, store, or forward user information to human agents" or that your role is strictly limited to static knowledge-base lookups.
 - Warm Lead Reception: When a visitor asks to connect with support or provides their contact details, cordially acknowledge their request, invite or confirm their details (name, phone number, email, and requirements), and reassure them that their details and message are captured and made available to the Shaivik Technologies team.`;
 
+const WEBSITE_BROWSING_GUIDELINES = `Website Browsing & Inspection Guidelines:
+- Tool Availability: You have the "fetch_website" tool available to retrieve readable content and page titles from publicly accessible HTTP/HTTPS URLs.
+- When to Use:
+  * When a user explicitly provides a URL or domain and asks you to visit, inspect, browse, check, summarize, or read it (e.g., "visit this website", "check https://example.com", "what does this company do on shaiviktechnologies.in").
+  * When a user asks you to visit or inspect a URL mentioned in previous messages or conversation context (such as https://www.shaiviktechnologies.in/).
+- Execution & Response Rules:
+  * You MUST call the "fetch_website" tool with the target URL. Never respond saying you "cannot browse or visit websites", "cannot call URLs", or that you are "limited to static knowledge base".
+  * Base your answer strictly on the actual retrieved website content and page title.
+  * If the website is unreachable, blocked, or returns an error, politely inform the user that the website could not be accessed and explain the reason clearly without inventing or fabricating its contents.
+  * For questions that do not require external website browsing, continue answering from the connected knowledge base and company context.`;
+
 export class PromptBuilder {
   build(context, options = {}) {
     const {
@@ -50,6 +61,7 @@ export class PromptBuilder {
 
       sections.push(MULTILINGUAL_CONVERSATION_GUIDELINES);
       sections.push(SUPPORT_AND_LEAD_GUIDELINES);
+      sections.push(WEBSITE_BROWSING_GUIDELINES);
 
       return {
         role: "system",
@@ -115,6 +127,7 @@ Title: ${context.conversation?.title ?? "New Conversation"}`);
 
     sections.push(MULTILINGUAL_CONVERSATION_GUIDELINES);
     sections.push(SUPPORT_AND_LEAD_GUIDELINES);
+    sections.push(WEBSITE_BROWSING_GUIDELINES);
 
     sections.push(
       `Follow the configured agent instructions, organization AI instructions, conversation rules, and available context. Treat these instructions as authoritative for this conversation. Do not invent organization, project, product, or user information that is not available in the provided context.`,

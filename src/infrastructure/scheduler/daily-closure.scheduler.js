@@ -40,6 +40,23 @@ export class DailyClosureScheduler {
 
     this.scheduleNextRun();
     console.log(`[DailyClosureScheduler] Initialized for timezone ${this.timeZone}`);
+
+    // Run an immediate catchup for any conversations from past days that were not closed
+    this.service
+      .runDailyClosure({ force: true })
+      .then((res) => {
+        if (res?.closedCount > 0) {
+          console.log(
+            `[DailyClosureScheduler] Startup catchup completed: closed ${res.closedCount} conversation(s) from past days.`,
+          );
+        }
+      })
+      .catch((err) => {
+        console.error(
+          "[DailyClosureScheduler] Startup catchup error:",
+          err.message,
+        );
+      });
   }
 
   scheduleNextRun() {

@@ -11,6 +11,9 @@ export class ProviderError extends AppError {
     this.upstreamStatus = options.upstreamStatus || null;
     this.endpoint = options.endpoint || null;
     this.isTransient = options.isTransient ?? null;
+    this.tokensEmitted = options.tokensEmitted ?? null;
+    this.tokensEmittedCount = options.tokensEmittedCount ?? null;
+    this.attemptedModels = options.attemptedModels || null;
 
     if (options.cause && !this.cause) {
       this.cause = options.cause;

@@ -29,15 +29,16 @@ describe("FEATURE: Dynamic State-Aware AI Response Status", () => {
       provider: "ollama",
       model: "qwen3:8b",
     };
+    const expectedModel = process.env.OPENAI_MODEL || "nvidia/nemotron-3.5-super-vl:free";
     const resolvedOllama = service._resolveProviderAndModel(agentOllama);
     assert.equal(resolvedOllama.providerName, "openai");
-    assert.equal(resolvedOllama.modelName, "nvidia/nemotron-3-super-120b-a12b:free");
+    assert.equal(resolvedOllama.modelName, expectedModel);
 
     // Agent with default settings
     const agentDefault = {};
     const resolvedDefault = service._resolveProviderAndModel(agentDefault);
     assert.equal(resolvedDefault.providerName, "openai");
-    assert.equal(resolvedDefault.modelName, "nvidia/nemotron-3-super-120b-a12b:free");
+    assert.equal(resolvedDefault.modelName, expectedModel);
   });
 
   it("yields genuine status events during public chat stream lifecycle (thinking -> knowledge search -> generating)", async () => {

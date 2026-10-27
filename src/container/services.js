@@ -39,6 +39,7 @@ import { createAISettingsModule } from "../features/organization/ai-settings/di.
 import { createKnowledgeModule } from "../features/knowledge/di.js";
 import { AgentToolRepositoryImpl } from "../features/agent-tool/infrastructure/repositories/agent-tool.repository.impl.js";
 import { createAgentToolModule } from "../features/agent-tool/di.js";
+import { websiteFetcherService } from "../features/browser/service/website-fetcher.service.js";
 import { createWorkspaceApiKeysModule } from "../features/workspace/api-keys/di.js";
 import { createPlatformConfigModule } from "../features/platform/config/di.js";
 import { createEmbeddingProviderFactory } from "../providers/embeddings/embedding.provider.factory.js";
@@ -323,6 +324,7 @@ const agentToolModule = createAgentToolModule({
   projectRepository,
   checkProjectAccessUseCase: projectMemberModule.checkProjectAccessUseCase,
   captureLeadUseCase: leadModule.captureLeadUseCase,
+  websiteFetcherService,
 });
 
 const publicChatModule = createPublicChatModule({

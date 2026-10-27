@@ -254,7 +254,10 @@ export class PostgresConversationRepository extends ConversationRepository {
     const qb = repository
       .createQueryBuilder("conversation")
       .where("conversation.isCompleted = :isCompleted", { isCompleted: false })
-      .andWhere("conversation.updatedAt < :beforeDate", { beforeDate });
+      .andWhere(
+        "(conversation.createdAt < :beforeDate OR conversation.updatedAt < :beforeDate)",
+        { beforeDate },
+      );
 
     if (excludeHumanActive) {
       qb.andWhere("conversation.isHandover = :isHandover", {
@@ -262,7 +265,7 @@ export class PostgresConversationRepository extends ConversationRepository {
       });
     }
 
-    qb.orderBy("conversation.updatedAt", "ASC").take(limit);
+    qb.orderBy("conversation.createdAt", "ASC").take(limit);
 
     const entities = await qb.getMany();
     return entities.map((entity) => this.toDomain(entity));
@@ -277,7 +280,10 @@ export class PostgresConversationRepository extends ConversationRepository {
     const qb = repository
       .createQueryBuilder("conversation")
       .where("conversation.isCompleted = :isCompleted", { isCompleted: false })
-      .andWhere("conversation.updatedAt < :beforeDate", { beforeDate });
+      .andWhere(
+        "(conversation.createdAt < :beforeDate OR conversation.updatedAt < :beforeDate)",
+        { beforeDate },
+      );
 
     if (excludeHumanActive) {
       qb.andWhere("conversation.isHandover = :isHandover", {
@@ -294,7 +300,10 @@ export class PostgresConversationRepository extends ConversationRepository {
       .createQueryBuilder("conversation")
       .where("conversation.isCompleted = :isCompleted", { isCompleted: false })
       .andWhere("conversation.isHandover = :isHandover", { isHandover: true })
-      .andWhere("conversation.updatedAt < :beforeDate", { beforeDate })
+      .andWhere(
+        "(conversation.createdAt < :beforeDate OR conversation.updatedAt < :beforeDate)",
+        { beforeDate },
+      )
       .getCount();
   }
 }

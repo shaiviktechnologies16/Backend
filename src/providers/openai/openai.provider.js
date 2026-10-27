@@ -3,19 +3,24 @@ import { AIProvider } from "../interfaces/ai.provider.js";
 import { ProviderError } from "../../common/errors/ProviderError.js";
 import { ProviderConcurrencyLimiter } from "../concurrency/provider-concurrency-limiter.js";
 import { ProviderRateLimiter } from "../concurrency/provider-rate-limiter.js";
+import { ModelFailoverManager } from "./model-failover-manager.js";
 
 export class OpenAIProvider extends AIProvider {
   constructor({
-    getPlatformApiKeyValueUseCase,
+    getPlatformApiKeyValueUseCase = null,
     limiter = null,
     rateLimiter = null,
     redisClient = null,
-  }) {
+    failoverManager = null,
+  } = {}) {
     super();
 
     this.getPlatformApiKeyValueUseCase = getPlatformApiKeyValueUseCase;
 
-    // 1. Concurrency Limiter: bounds active in-flight parallel executions (default 5)
+    // 1. Failover Manager: dynamic fallback chain, capabilities & health tracking
+    this.failoverManager = failoverManager || new ModelFailoverManager();
+
+    // 2. Concurrency Limiter: bounds active in-flight parallel executions (default 5)
     this.limiter =
       limiter ||
       new ProviderConcurrencyLimiter({
@@ -29,7 +34,7 @@ export class OpenAIProvider extends AIProvider {
         queueTimeoutMs: Number(process.env.OPENAI_QUEUE_TIMEOUT_MS || 30000),
       });
 
-    // 2. Rate Limiter: strictly enforces Requests Per Minute ceiling (default 20 RPM for OpenRouter free)
+    // 3. Rate Limiter: strictly enforces Requests Per Minute ceiling (default 20 RPM for OpenRouter free)
     this.rateLimiter =
       rateLimiter ||
       new ProviderRateLimiter({
@@ -52,9 +57,7 @@ export class OpenAIProvider extends AIProvider {
   }
 
   get model() {
-    return (
-      process.env.OPENAI_MODEL || "nvidia/nemotron-3-super-120b-a12b:free"
-    );
+    return this.failoverManager.getPrimaryModel();
   }
 
   get maxContextMessages() {
@@ -62,25 +65,14 @@ export class OpenAIProvider extends AIProvider {
   }
 
   _resolveModel(model) {
-    let target = model || this.model;
-    if (
-      !target ||
-      target === "qwen3:8b" ||
-      target === "qwen2.5vl:7b" ||
-      target === "nomic-embed-text:latest" ||
-      target === "gpt-4o-mini" ||
-      target === "nemotron-3-super-120b-a12b:free"
-    ) {
-      target =
-        process.env.OPENAI_MODEL || "nvidia/nemotron-3-super-120b-a12b:free";
-    }
-    return target;
+    return this.failoverManager.normalizeModelId(model || this.model);
   }
 
   getConcurrencyMetrics() {
     return {
       concurrency: this.limiter?.getMetrics() || null,
       rateLimiter: this.rateLimiter?.getMetrics() || null,
+      failover: this.failoverManager?.getMetrics() || null,
     };
   }
 
@@ -116,6 +108,9 @@ export class OpenAIProvider extends AIProvider {
     }
 
     const baseURL = process.env.OPENAI_BASE_URL?.trim();
+    const appName = process.env.OPENROUTER_APP_NAME || "Shaivik AI SaaS";
+    const siteUrl =
+      process.env.OPENROUTER_SITE_URL || "https://shaiviktechnologies.in";
 
     return new OpenAI({
       apiKey,
@@ -123,10 +118,9 @@ export class OpenAIProvider extends AIProvider {
       ...(baseURL?.includes("openrouter.ai")
         ? {
             defaultHeaders: {
-              "HTTP-Referer":
-                process.env.OPENROUTER_SITE_URL ||
-                "https://shaiviktechnologies.in",
-              "X-OpenRouter-Title": "Shaivik AI",
+              "HTTP-Referer": siteUrl,
+              "X-Title": appName,
+              "X-OpenRouter-Title": appName,
             },
           }
         : {}),
@@ -161,7 +155,7 @@ export class OpenAIProvider extends AIProvider {
       error.cause?.status ||
       error.cause?.statusCode;
 
-    if (status === 401 || status === 402 || status === 403) {
+    if (status === 400 || status === 401 || status === 402 || status === 403) {
       return false;
     }
 
@@ -183,6 +177,7 @@ export class OpenAIProvider extends AIProvider {
       status === 504 ||
       status === 530 ||
       status === 429 ||
+      status === 404 ||
       (typeof status === "number" && status >= 500 && status <= 599)
     ) {
       return true;
@@ -205,6 +200,10 @@ export class OpenAIProvider extends AIProvider {
       msg.includes("530") ||
       msg.includes("524") ||
       msg.includes("520") ||
+      msg.includes("404") ||
+      msg.includes("not found") ||
+      msg.includes("provider returned error") ||
+      msg.includes("no available provider") ||
       msg.includes("origin dns error") ||
       msg.includes("fetch failed") ||
       msg.includes("bad gateway") ||
@@ -222,349 +221,429 @@ export class OpenAIProvider extends AIProvider {
   }
 
   async chat(messages, options = {}) {
-    const targetModel = this._resolveModel(options.model);
-    const maxRetries = 2;
-    let client = null;
+    const candidates = this.failoverManager.getCandidateChain({
+      requestedModel: options.model,
+      messages,
+      tools: options.tools,
+    });
 
+    let client = null;
     try {
       client = await this.getClient();
     } catch (clientErr) {
       if (clientErr instanceof ProviderError) throw clientErr;
       throw new ProviderError("Unable to initialize AI provider client.", {
         provider: this.name,
-        model: targetModel,
+        model: candidates[0],
         cause: clientErr,
       });
     }
 
-    // Step 1: Acquire rate limiter permit FIRST without occupying a concurrency slot
-    const refundRateToken = await this.rateLimiter.acquire({
-      signal: options.signal,
-      model: targetModel,
-      provider: this.name,
-    });
+    let lastError = null;
 
-    let isDispatched = false;
-    const safeRefund = () => {
-      // Guard: Never refund after request has been dispatched upstream to the provider!
-      if (!isDispatched && typeof refundRateToken === "function") {
-        try {
-          refundRateToken();
-        } catch (err) {
-          console.warn("[RATE_LIMIT_REFUND_ERROR]", err.message);
-        }
-      }
-    };
+    for (let cIdx = 0; cIdx < candidates.length; cIdx++) {
+      const activeModel = candidates[cIdx];
+      const isFallback = cIdx > 0;
 
-    let releaseConcurrencySlot = null;
-    try {
-      // Step 2: Acquire concurrency slot from bounded limiter queue
-      releaseConcurrencySlot = await this.limiter.acquire({
+      // Acquire rate limiter permit
+      const refundRateToken = await this.rateLimiter.acquire({
         signal: options.signal,
-        model: targetModel,
+        model: activeModel,
         provider: this.name,
       });
-    } catch (concurrencyErr) {
-      safeRefund();
-      throw concurrencyErr;
-    }
 
-    try {
-      for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        if (attempt > 0) {
-          await this.rateLimiter.acquire({
-            signal: options.signal,
-            model: targetModel,
+      let isDispatched = false;
+      const safeRefund = () => {
+        if (!isDispatched && typeof refundRateToken === "function") {
+          try {
+            refundRateToken();
+          } catch (err) {
+            console.warn("[RATE_LIMIT_REFUND_ERROR]", err.message);
+          }
+        }
+      };
+
+      let releaseConcurrencySlot = null;
+      try {
+        releaseConcurrencySlot = await this.limiter.acquire({
+          signal: options.signal,
+          model: activeModel,
+          provider: this.name,
+        });
+      } catch (concurrencyErr) {
+        safeRefund();
+        throw concurrencyErr;
+      }
+
+      try {
+        isDispatched = true;
+
+        const createParams = {
+          model: activeModel,
+          messages,
+          temperature: options.temperature,
+          max_tokens: options.maxTokens,
+        };
+
+        if (Array.isArray(options.tools) && options.tools.length > 0) {
+          createParams.tools = options.tools;
+          createParams.tool_choice = options.toolChoice || "auto";
+        }
+
+        if (
+          activeModel.includes("nemotron") ||
+          activeModel.includes("reasoning")
+        ) {
+          createParams.reasoning = { effort: "none" };
+        }
+
+        const completion = await client.chat.completions.create(createParams, {
+          signal: options.signal,
+        });
+
+        // Ensure returned object is valid
+        if (!completion || (!completion.choices && !completion.message)) {
+          throw new ProviderError("AI provider returned empty or malformed completion.", {
             provider: this.name,
+            model: activeModel,
           });
         }
 
-        try {
-          // Mark as dispatched immediately before calling upstream client
-          isDispatched = true;
+        // Attach actual responding model name and ensure both choices and message access work
+        completion.model = activeModel;
+        if (completion.choices?.[0]?.message && !completion.message) {
+          completion.message = completion.choices[0].message;
+        }
 
-          const createParams = {
-            model: targetModel,
-            messages,
-            temperature: options.temperature,
-            max_tokens: options.maxTokens,
-          };
+        this.failoverManager.recordSuccess(activeModel, { isFallback });
+        return completion;
+      } catch (error) {
+        lastError = error;
 
-          if (
-            targetModel.includes("nemotron") ||
-            targetModel.includes("reasoning")
-          ) {
-            createParams.reasoning = { effort: "none" };
-          }
+        if (error.name === "AbortError" || options.signal?.aborted) {
+          throw error;
+        }
 
-          return await client.chat.completions.create(createParams, {
-            signal: options.signal,
-          });
-        } catch (error) {
-          if (error.name === "AbortError" || options.signal?.aborted) {
-            throw error;
-          }
+        const isTransient = this._isTransientError(error);
+        const retryAfterSec = this._extractRetryAfter(error);
 
-          const isTransient = this._isTransientError(error);
-          const retryAfterSec = this._extractRetryAfter(error);
+        if (retryAfterSec && retryAfterSec > 0) {
+          const delayMs = retryAfterSec * 1000;
+          this.limiter.pauseFor(delayMs);
+          this.rateLimiter.pauseFor(delayMs);
+        }
 
-          if (retryAfterSec && retryAfterSec > 0) {
-            const delayMs = retryAfterSec * 1000;
-            this.limiter.pauseFor(delayMs);
-            this.rateLimiter.pauseFor(delayMs);
-          }
+        console.warn("[OPENAI CHAT ATTEMPT FAILED]", {
+          model: activeModel,
+          isFallback,
+          nextCandidate: candidates[cIdx + 1] || null,
+          isTransient,
+          status: error.status || error.statusCode,
+          code: error.code,
+          message: error.message,
+          retryAfterSec,
+        });
 
-          console.warn("[OPENAI CHAT ATTEMPT FAILED]", {
-            attempt: attempt + 1,
-            maxRetries: maxRetries + 1,
-            isTransient,
-            status: error.status,
-            code: error.code,
-            message: error.message,
-            retryAfterSec,
-            model: targetModel,
-          });
+        // Client errors (400, 401, 403, quota exhaustion) must fail immediately without burning fallbacks
+        if (!isTransient) {
+          if (error instanceof ProviderError) throw error;
+          throw new ProviderError(
+            `AI provider rejected request (${error.status || error.code || "client error"}): ${error.message}`,
+            {
+              provider: this.name,
+              model: activeModel,
+              upstreamStatus: error.status,
+              isTransient: false,
+              cause: error,
+            },
+          );
+        }
 
-          if (!isTransient || attempt >= maxRetries) {
-            if (error instanceof ProviderError) {
-              throw error;
-            }
+        this.failoverManager.recordFailure(activeModel, error);
 
-            throw new ProviderError(
-              `Unable to generate response from AI provider (${error.status || error.code || "upstream error"}).`,
-              {
-                provider: this.name,
-                model: targetModel,
-                upstreamStatus: error.status,
-                isTransient,
-                cause: error,
-              },
-            );
-          }
-
-          const baseBackoff = Math.min(2000, 400 * Math.pow(2, attempt));
-          const jitter = Math.floor(Math.random() * 200);
-          const backoffMs =
-            retryAfterSec && retryAfterSec > 0
-              ? Math.min(retryAfterSec * 1000, 5000)
-              : baseBackoff + jitter;
-
+        // If there's an eligible fallback model in chain, activate it
+        if (cIdx < candidates.length - 1) {
+          const nextModel = candidates[cIdx + 1];
+          this.failoverManager.recordFallbackActivation(activeModel, nextModel);
+          const backoffMs = Math.min(1000, 200 * (cIdx + 1));
           await new Promise((resolve) => setTimeout(resolve, backoffMs));
+          continue;
         }
-      }
-    } finally {
-      if (releaseConcurrencySlot) {
-        releaseConcurrencySlot();
+      } finally {
+        if (releaseConcurrencySlot) {
+          releaseConcurrencySlot();
+        }
       }
     }
+
+    // All fallback models in chain were exhausted
+    this.failoverManager.recordExhaustedFailures();
+    throw new ProviderError(
+      `Unable to generate response from AI provider. All fallback models failed (${lastError?.status || lastError?.code || "unavailable"}).`,
+      {
+        provider: this.name,
+        model: candidates[0],
+        attemptedModels: candidates,
+        upstreamStatus: lastError?.status,
+        isTransient: true,
+        cause: lastError,
+      },
+    );
   }
 
   async *stream(messages, options = {}) {
-    const targetModel = this._resolveModel(options.model);
-    const maxRetries = 2;
-    let client = null;
+    const candidates = this.failoverManager.getCandidateChain({
+      requestedModel: options.model,
+      messages,
+      tools: options.tools,
+    });
 
+    let client = null;
     try {
       client = await this.getClient();
     } catch (clientErr) {
       if (clientErr instanceof ProviderError) throw clientErr;
       throw new ProviderError("Unable to initialize AI provider client.", {
         provider: this.name,
-        model: targetModel,
+        model: candidates[0],
         cause: clientErr,
       });
     }
 
-    // Candidate models for resilient fallback if primary free model experiences 530/outage
-    const modelCandidates = [
-      targetModel,
-      ...(targetModel.includes("nemotron-3-super")
-        ? [
-            "nvidia/nemotron-3.5-lightning:free",
-            "google/gemma-4-26b-a4b-it:free",
-          ]
-        : []),
-    ];
+    let lastError = null;
 
-    // Step 1: Acquire rate limiter permit FIRST without occupying a concurrency slot
-    const refundRateToken = await this.rateLimiter.acquire({
-      signal: options.signal,
-      model: targetModel,
-      provider: this.name,
-    });
+    for (let cIdx = 0; cIdx < candidates.length; cIdx++) {
+      const activeModel = candidates[cIdx];
+      const isFallback = cIdx > 0;
 
-    let isDispatched = false;
-    const safeRefund = () => {
-      // Guard: Never refund after request has been dispatched upstream to the provider!
-      if (!isDispatched && typeof refundRateToken === "function") {
-        try {
-          refundRateToken();
-        } catch (err) {
-          console.warn("[RATE_LIMIT_REFUND_ERROR]", err.message);
-        }
-      }
-    };
-
-    let releaseConcurrencySlot = null;
-    try {
-      // Step 2: Acquire concurrency slot from bounded limiter queue
-      releaseConcurrencySlot = await this.limiter.acquire({
+      // Acquire rate limiter permit
+      const refundRateToken = await this.rateLimiter.acquire({
         signal: options.signal,
-        model: targetModel,
+        model: activeModel,
         provider: this.name,
       });
-    } catch (concurrencyErr) {
-      safeRefund();
-      throw concurrencyErr;
-    }
 
-    try {
+      let isDispatched = false;
+      const safeRefund = () => {
+        if (!isDispatched && typeof refundRateToken === "function") {
+          try {
+            refundRateToken();
+          } catch (err) {
+            console.warn("[RATE_LIMIT_REFUND_ERROR]", err.message);
+          }
+        }
+      };
+
+      let releaseConcurrencySlot = null;
+      try {
+        releaseConcurrencySlot = await this.limiter.acquire({
+          signal: options.signal,
+          model: activeModel,
+          provider: this.name,
+        });
+      } catch (concurrencyErr) {
+        safeRefund();
+        throw concurrencyErr;
+      }
+
       let tokensEmitted = 0;
 
-      for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        if (attempt > 0) {
-          await this.rateLimiter.acquire({
-            signal: options.signal,
-            model: targetModel,
-            provider: this.name,
-          });
+      try {
+        isDispatched = true;
+
+        const createParams = {
+          model: activeModel,
+          messages,
+          temperature: options.temperature,
+          max_tokens: options.maxTokens,
+          stream: true,
+          stream_options: {
+            include_usage: true,
+          },
+        };
+
+        if (Array.isArray(options.tools) && options.tools.length > 0) {
+          createParams.tools = options.tools;
+          createParams.tool_choice = options.toolChoice || "auto";
         }
 
-        const activeModel =
-          modelCandidates[Math.min(attempt, modelCandidates.length - 1)];
+        // Optimize OpenRouter reasoning models to achieve sub-second TTFB
+        if (
+          activeModel.includes("nemotron") ||
+          activeModel.includes("reasoning")
+        ) {
+          createParams.reasoning = { effort: "none" };
+        }
 
-        try {
-          // Mark as dispatched immediately before calling upstream client
-          isDispatched = true;
+        const stream = await client.chat.completions.create(createParams, {
+          signal: options.signal,
+        });
 
-          const createParams = {
-            model: activeModel,
-            messages,
-            temperature: options.temperature,
-            max_tokens: options.maxTokens,
-            stream: true,
-            stream_options: {
-              include_usage: true,
-            },
-          };
+        // Yield model metadata event first so callers know the responding model
+        yield {
+          type: "model",
+          model: activeModel,
+          isFallback,
+        };
 
-          // Optimize OpenRouter reasoning models to achieve sub-second TTFB
-          if (
-            activeModel.includes("nemotron") ||
-            activeModel.includes("reasoning")
-          ) {
-            createParams.reasoning = { effort: "none" };
-          }
+        const toolCallsMap = new Map();
 
-          const stream = await client.chat.completions.create(createParams, {
-            signal: options.signal,
-          });
-
-          for await (const chunk of stream) {
-            if (options.signal?.aborted) {
-              return;
-            }
-
-            const content = chunk.choices?.[0]?.delta?.content;
-
-            if (typeof content === "string" && content) {
-              tokensEmitted++;
-              yield {
-                type: "token",
-                content,
-              };
-            }
-
-            if (chunk.usage) {
-              const inputTokens = chunk.usage.prompt_tokens ?? 0;
-              const outputTokens = chunk.usage.completion_tokens ?? 0;
-
-              yield {
-                type: "usage",
-                usage: {
-                  inputTokens,
-                  outputTokens,
-                  totalTokens:
-                    chunk.usage.total_tokens ?? inputTokens + outputTokens,
-                },
-              };
-            }
-          }
-
-          // Stream completed successfully!
-          return;
-        } catch (streamErr) {
-          if (streamErr.name === "AbortError" || options.signal?.aborted) {
+        for await (const chunk of stream) {
+          if (options.signal?.aborted) {
             return;
           }
 
-          const isTransient = this._isTransientError(streamErr);
-          const retryAfterSec = this._extractRetryAfter(streamErr);
+          const delta = chunk.choices?.[0]?.delta;
+          const content = delta?.content;
 
-          if (retryAfterSec && retryAfterSec > 0) {
-            const delayMs = retryAfterSec * 1000;
-            this.limiter.pauseFor(delayMs);
-            this.rateLimiter.pauseFor(delayMs);
+          if (typeof content === "string" && content) {
+            tokensEmitted++;
+            yield {
+              type: "token",
+              content,
+            };
           }
 
-          console.warn("[OPENAI STREAM ATTEMPT FAILED]", {
-            attempt: attempt + 1,
-            maxRetries: maxRetries + 1,
-            activeModel,
-            tokensEmitted,
-            isTransient,
-            status: streamErr.status || streamErr.statusCode,
-            code: streamErr.code,
-            message: streamErr.message,
-            retryAfterSec,
-          });
+          if (Array.isArray(delta?.tool_calls)) {
+            for (const tc of delta.tool_calls) {
+              const idx = tc.index ?? 0;
+              if (!toolCallsMap.has(idx)) {
+                toolCallsMap.set(idx, {
+                  id: tc.id || `call_${Date.now()}_${idx}`,
+                  type: tc.type || "function",
+                  function: {
+                    name: tc.function?.name || "",
+                    arguments: tc.function?.arguments || "",
+                  },
+                });
+              } else {
+                const existing = toolCallsMap.get(idx);
+                if (tc.id && !existing.id) existing.id = tc.id;
+                if (tc.function?.name) existing.function.name += tc.function.name;
+                if (tc.function?.arguments) existing.function.arguments += tc.function.arguments;
+              }
+            }
+          }
 
-          // If tokens were ALREADY emitted to caller, we cannot re-emit from scratch
-          if (tokensEmitted > 0) {
-            throw new ProviderError(
-              `Stream connection interrupted by AI provider (${streamErr.status || streamErr.statusCode || streamErr.code || "530"}).`,
-              {
-                provider: this.name,
-                model: activeModel,
-                upstreamStatus: streamErr.status || streamErr.statusCode || 530,
-                isTransient,
-                tokensEmitted: true,
-                tokensEmittedCount: tokensEmitted,
-                cause: streamErr,
+          if (chunk.usage) {
+            const inputTokens = chunk.usage.prompt_tokens ?? 0;
+            const outputTokens = chunk.usage.completion_tokens ?? 0;
+
+            yield {
+              type: "usage",
+              model: activeModel,
+              usage: {
+                inputTokens,
+                outputTokens,
+                totalTokens:
+                  chunk.usage.total_tokens ?? inputTokens + outputTokens,
               },
-            );
+            };
           }
+        }
 
-          // If 0 tokens were emitted, and error is not transient or retries exhausted, throw
-          if (!isTransient || attempt >= maxRetries) {
-            if (streamErr instanceof ProviderError) throw streamErr;
-            throw new ProviderError(
-              `Unable to stream from AI provider (${streamErr.status || streamErr.statusCode || streamErr.code || "upstream error"}).`,
-              {
-                provider: this.name,
-                model: activeModel,
-                upstreamStatus: streamErr.status || streamErr.statusCode,
-                isTransient,
-                tokensEmitted: false,
-                cause: streamErr,
-              },
-            );
-          }
+        if (toolCallsMap.size > 0) {
+          const accumulatedToolCalls = Array.from(toolCallsMap.values());
+          yield {
+            type: "tool_calls",
+            toolCalls: accumulatedToolCalls,
+            model: activeModel,
+          };
+        }
 
-          const baseBackoff = Math.min(2000, 400 * Math.pow(2, attempt));
-          const jitter = Math.floor(Math.random() * 200);
-          const backoffMs =
-            retryAfterSec && retryAfterSec > 0
-              ? Math.min(retryAfterSec * 1000, 5000)
-              : baseBackoff + jitter;
+        // Stream completed successfully!
+        this.failoverManager.recordSuccess(activeModel, { isFallback });
+        return;
+      } catch (streamErr) {
+        lastError = streamErr;
 
+        if (streamErr.name === "AbortError" || options.signal?.aborted) {
+          return;
+        }
+
+        const isTransient = this._isTransientError(streamErr);
+        const retryAfterSec = this._extractRetryAfter(streamErr);
+
+        if (retryAfterSec && retryAfterSec > 0) {
+          const delayMs = retryAfterSec * 1000;
+          this.limiter.pauseFor(delayMs);
+          this.rateLimiter.pauseFor(delayMs);
+        }
+
+        console.warn("[OPENAI STREAM ATTEMPT FAILED]", {
+          activeModel,
+          isFallback,
+          tokensEmitted,
+          isTransient,
+          status: streamErr.status || streamErr.statusCode,
+          code: streamErr.code,
+          message: streamErr.message,
+          retryAfterSec,
+        });
+
+        // CRITICAL: If tokens were ALREADY emitted to caller, we CANNOT restart stream
+        // with another model because it would corrupt/duplicate text on the client.
+        if (tokensEmitted > 0) {
+          throw new ProviderError(
+            `Stream connection interrupted by AI provider (${streamErr.status || streamErr.statusCode || streamErr.code || "530"}).`,
+            {
+              provider: this.name,
+              model: activeModel,
+              upstreamStatus: streamErr.status || streamErr.statusCode || 530,
+              isTransient,
+              tokensEmitted: true,
+              tokensEmittedCount: tokensEmitted,
+              cause: streamErr,
+            },
+          );
+        }
+
+        // Non-transient errors (400, 401, 403, quota) must not trigger fallbacks
+        if (!isTransient) {
+          if (streamErr instanceof ProviderError) throw streamErr;
+          throw new ProviderError(
+            `AI provider rejected streaming request (${streamErr.status || streamErr.code || "client error"}): ${streamErr.message}`,
+            {
+              provider: this.name,
+              model: activeModel,
+              upstreamStatus: streamErr.status || streamErr.statusCode,
+              isTransient: false,
+              tokensEmitted: false,
+              cause: streamErr,
+            },
+          );
+        }
+
+        this.failoverManager.recordFailure(activeModel, streamErr);
+
+        // If 0 tokens were emitted and fallback is available, attempt next candidate
+        if (cIdx < candidates.length - 1) {
+          const nextModel = candidates[cIdx + 1];
+          this.failoverManager.recordFallbackActivation(activeModel, nextModel);
+          const backoffMs = Math.min(1000, 200 * (cIdx + 1));
           await new Promise((resolve) => setTimeout(resolve, backoffMs));
+          continue;
+        }
+      } finally {
+        if (releaseConcurrencySlot) {
+          releaseConcurrencySlot();
         }
       }
-    } finally {
-      if (releaseConcurrencySlot) {
-        releaseConcurrencySlot();
-      }
     }
+
+    // All fallback models in chain were exhausted
+    this.failoverManager.recordExhaustedFailures();
+    throw new ProviderError(
+      `Unable to stream from AI provider. All fallback models failed (${lastError?.status || lastError?.code || "unavailable"}).`,
+      {
+        provider: this.name,
+        model: candidates[0],
+        attemptedModels: candidates,
+        upstreamStatus: lastError?.status || lastError?.statusCode,
+        isTransient: true,
+        tokensEmitted: false,
+        cause: lastError,
+      },
+    );
   }
 }

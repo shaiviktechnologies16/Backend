@@ -15,6 +15,7 @@ export const createAgentToolModule = ({
   projectRepository,
   checkProjectAccessUseCase,
   captureLeadUseCase,
+  websiteFetcherService,
 }) => {
   const agentToolSchemaService = new AgentToolSchemaService();
 
@@ -22,6 +23,7 @@ export const createAgentToolModule = ({
     workspaceApiKeyRepository,
     encryptionService,
     captureLeadUseCase,
+    websiteFetcherService,
   });
 
   const agentToolResolverService = new AgentToolResolverService(

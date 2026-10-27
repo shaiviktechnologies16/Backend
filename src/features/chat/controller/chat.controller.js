@@ -366,7 +366,36 @@ export const streamWorkspaceEvents = asyncHandler(async (req, res) => {
     writeEvent(res, "message.created", event);
   };
 
+  const onStatusUpdated = (event) => {
+    console.log(
+      "[RealtimeDebug] Broadcasting status event to Workspace SSE client:",
+      {
+        event: "conversation.status.updated",
+        conversationId: event.conversationId,
+        projectId: event.projectId,
+        isCompleted: event.isCompleted,
+        isHandover: event.isHandover,
+      },
+    );
+    writeEvent(res, "conversation.status.updated", event);
+  };
+
+  const onTitleUpdated = (event) => {
+    console.log(
+      "[RealtimeDebug] Broadcasting title event to Workspace SSE client:",
+      {
+        event: "conversation.title.updated",
+        conversationId: event.conversationId,
+        projectId: event.projectId,
+        title: event.title,
+      },
+    );
+    writeEvent(res, "conversation.title.updated", event);
+  };
+
   workspaceRealtimeEmitter.on("conversation.message.created", onMessageCreated);
+  workspaceRealtimeEmitter.on("conversation.status.updated", onStatusUpdated);
+  workspaceRealtimeEmitter.on("conversation.title.updated", onTitleUpdated);
 
   res.on("close", () => {
     clearInterval(heartbeatInterval);
@@ -376,6 +405,14 @@ export const streamWorkspaceEvents = asyncHandler(async (req, res) => {
     workspaceRealtimeEmitter.off(
       "conversation.message.created",
       onMessageCreated,
+    );
+    workspaceRealtimeEmitter.off(
+      "conversation.status.updated",
+      onStatusUpdated,
+    );
+    workspaceRealtimeEmitter.off(
+      "conversation.title.updated",
+      onTitleUpdated,
     );
   });
 });

@@ -29,7 +29,7 @@ export class PostgresMessageRepository extends MessageRepository {
       id: message.id,
       role: message.role,
       content: message.content,
-      createdAt: message.createdAt,
+      createdAt: message.createdAt || new Date(),
       conversation: {
         id: message.conversationId,
       },
@@ -78,7 +78,17 @@ export class PostgresMessageRepository extends MessageRepository {
       },
       order: {
         createdAt: "ASC",
+        id: "ASC",
       },
+    });
+
+    entities.sort((a, b) => {
+      const timeDiff =
+        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      if (timeDiff !== 0) return timeDiff;
+      if (a.role === "user" && b.role === "assistant") return -1;
+      if (a.role === "assistant" && b.role === "user") return 1;
+      return String(a.id).localeCompare(String(b.id));
     });
 
     return entities.map((entity) => this.toDomain(entity));

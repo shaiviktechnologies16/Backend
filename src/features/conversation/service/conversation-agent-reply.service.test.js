@@ -126,6 +126,10 @@ let mockConvRepoWithHistory = {
   async findLatestByVisitorAndAgent(visitorId, agentId) {
     return this.latestConv;
   },
+  async update(conv) {
+    this.latestConv = conv;
+    return conv;
+  },
 };
 
 let mockMessageRepoWithHistory = {
@@ -164,7 +168,7 @@ const todayActive = await activeConvService.getPublicActiveConversation(
 assert.equal(todayActive.conversation?.id, "conv-today");
 assert.equal(todayActive.messages.length, 2);
 
-// Case B: Active conversation from previous day -> preserved and restored
+// Case B: Active conversation from previous day -> closed and starts new chat
 mockConvRepoWithHistory.latestConv = {
   id: "conv-yesterday",
   agentId: "agent-123",
@@ -178,8 +182,9 @@ const yesterdayActive = await activeConvService.getPublicActiveConversation(
   "pub-123",
   "vis-123",
 );
-assert.equal(yesterdayActive.conversation?.id, "conv-yesterday");
-assert.equal(yesterdayActive.messages.length, 2);
+assert.equal(yesterdayActive.conversation, null);
+assert.equal(yesterdayActive.messages.length, 0);
+assert.equal(mockConvRepoWithHistory.latestConv.isCompleted, true);
 
 // Case C: Completed conversation -> returned null (fresh start for completed chat)
 mockConvRepoWithHistory.latestConv = {

@@ -154,6 +154,101 @@ export class ConversationService {
     }
   }
 
+  isSameBusinessDay(date, timeZone = "Asia/Kolkata", referenceDate = new Date()) {
+    return this.isSameCalendarDay(date, referenceDate, timeZone);
+  }
+
+  _emitConversationClosed(conv) {
+    if (!conv) return;
+    try {
+      workspaceRealtimeEmitter.emit("conversation.status.updated", {
+        conversationId: conv.id,
+        projectId: conv.projectId,
+        isHandover: false,
+        isCompleted: true,
+        status: "COMPLETED",
+        completedBy: "SYSTEM_DAILY_CLOSURE",
+        completedAt: conv.completedAt
+          ? (conv.completedAt instanceof Date ? conv.completedAt.toISOString() : new Date(conv.completedAt).toISOString())
+          : new Date().toISOString(),
+        updatedAt: conv.updatedAt
+          ? (conv.updatedAt instanceof Date ? conv.updatedAt.toISOString() : new Date(conv.updatedAt).toISOString())
+          : new Date().toISOString(),
+      });
+    } catch (err) {
+      console.warn("[ConversationService] emit conversation.status.updated failed:", err.message);
+    }
+  }
+
+  _completeConversationEntity(conv, closedBy = null) {
+    if (!conv) return;
+    if (typeof conv.completeConversation === "function") {
+      conv.completeConversation(closedBy);
+    } else {
+      conv.isCompleted = true;
+      conv.completedAt = new Date();
+    }
+  }
+
+  _updateConversationTitle(conv, title) {
+    if (!conv) return;
+    if (typeof conv.updateTitle === "function") {
+      conv.updateTitle(title);
+    } else {
+      conv.title = title;
+    }
+  }
+
+  extractVisitorName(content) {
+    if (!content || typeof content !== "string") return null;
+    const text = content.trim();
+
+    const patterns = [
+      /(?:my\s+name\s+is|this\s+is|name\s*[:\-|]|call\s+me)\s+([A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F\s'-]{1,35})/i,
+      /(?:i\s+am|i'm)\s+([A-Za-z\u00C0-\u024F][A-Za-z\u00C0-\u024F\s'-]{1,35})/i,
+      /(?:నా\s*పేరు|నాపేరు|నేను)\s+([\u0C00-\u0C7F\s]{2,30})/u,
+      /(?:naa?\s+peru|nenu)\s+([A-Za-z][A-Za-z\s'-]{1,30})/i,
+      /(?:मेरा\s*नाम|में\s*हूँ|मैं\s*हूँ)\s+([\u0900-\u097F\s]{2,30})/u,
+      /(?:mera\s+naam)\s+([A-Za-z][A-Za-z\s'-]{1,30})/i,
+      /^([A-Za-z][A-Za-z\s'-]{1,30})\s+(?:(?:\+|00)91[\s.-]*)?[6789]\d{9}\b/i,
+    ];
+
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (match && match[1]) {
+        let name = match[1].trim();
+        name = name.split(/[\r\n,.!?]/)[0].trim();
+        name = name.replace(/\s+(?:here|and|please|from|my|the|is|hai|hoon|hun|ni|andi|garu)$/i, "").trim();
+
+        const lower = name.toLowerCase();
+        const invalidWords = [
+          "a", "an", "the", "interested", "looking", "asking", "calling",
+          "chatting", "here", "ready", "ok", "okay", "fine", "good", "hello",
+          "human", "user", "visitor", "customer", "admin", "planning", "thinking",
+          "trying", "writing", "sending", "testing", "my"
+        ];
+
+        const words = lower.split(/\s+/);
+        if (words.some((w) => invalidWords.includes(w) && words.length === 1)) {
+          continue;
+        }
+        if (words.length > 0 && invalidWords.includes(words[0])) {
+          continue;
+        }
+
+        if (name.length >= 2 && name.length <= 40) {
+          const formatted = name
+            .split(/\s+/)
+            .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+            .join(" ");
+          return formatted;
+        }
+      }
+    }
+
+    return null;
+  }
+
   setAgentTyping({ conversationId, isTyping }) {
     if (!conversationId) return;
     if (Boolean(isTyping)) {
@@ -429,14 +524,8 @@ export class ConversationService {
     );
     const email = emailMatch ? emailMatch[0] : null;
 
-    // 3. Name (explicit indicator, e.g. "my name is John", "name: John", "i am John")
-    let name = null;
-    const nameMatch = text.match(
-      /(?:my name is|i am|this is|name\s*[:\-])\s+([A-Za-z][A-Za-z\s]{1,30})/i,
-    );
-    if (nameMatch) {
-      name = nameMatch[1].trim();
-    }
+    // 3. Name (using robust visitor name extraction)
+    let name = this.extractVisitorName(text);
 
     // 4. Company (explicit indicator, e.g. "company: Acme", "firm: Acme")
     let company = null;
@@ -447,7 +536,7 @@ export class ConversationService {
       company = companyMatch[1].trim();
     }
 
-    if (!phone && !email) {
+    if (!phone && !email && !name) {
       return null;
     }
 
@@ -461,7 +550,32 @@ export class ConversationService {
   }
 
   async recordVisitorLeadIfPresent({ conversation, content, agent }) {
-    if (!this.captureLeadUseCase || !content || !conversation) return null;
+    if (!content || !conversation) return null;
+
+    // Update conversation title if visitor provided their name
+    const detectedName = this.extractVisitorName(content);
+    if (
+      detectedName &&
+      (!conversation.title || conversation.title === "New Conversation")
+    ) {
+      this._updateConversationTitle(conversation, detectedName);
+      try {
+        await this.conversationRepository.update(conversation);
+        workspaceRealtimeEmitter.emit("conversation.title.updated", {
+          conversationId: conversation.id,
+          projectId: conversation.projectId,
+          title: detectedName,
+        });
+        console.log("[CONVERSATION_TITLE_UPDATED_WITH_VISITOR_NAME]", {
+          conversationId: conversation.id,
+          title: detectedName,
+        });
+      } catch (titleErr) {
+        console.warn("[CONVERSATION_TITLE_UPDATE_FAILED]", titleErr.message);
+      }
+    }
+
+    if (!this.captureLeadUseCase) return null;
 
     const leadData = this.extractLeadDetails(content);
     if (!leadData) return null;
@@ -471,7 +585,7 @@ export class ConversationService {
         agentId: conversation.agentId,
         conversationId: conversation.id,
         visitorId: conversation.visitorId,
-        name: leadData.name || null,
+        name: leadData.name || detectedName || null,
         phone: leadData.phone || null,
         email: leadData.email || null,
         requirement: leadData.requirement || content,
@@ -885,6 +999,7 @@ export class ConversationService {
         conversationId: conversation.id,
         role: MessageRole.USER,
         content,
+        createdAt: new Date(),
       });
 
       await this.messageRepository.create(userMessage, manager);
@@ -988,6 +1103,8 @@ export class ConversationService {
 
         toolMessages.push({
           role: "tool",
+          tool_call_id: toolCall.id,
+          name: toolName,
           content: typeof result === "string" ? result : JSON.stringify(result),
         });
       }
@@ -1115,6 +1232,7 @@ export class ConversationService {
         conversationId: conversation.id,
         role: MessageRole.USER,
         content,
+        createdAt: new Date(),
       });
 
       await this.messageRepository.create(userMessage, manager);
@@ -1166,7 +1284,9 @@ export class ConversationService {
 
     let ragSources = [];
     let ragMs = 0;
-    let tools = [];
+    let tools = this.agentToolSchemaService
+      ? this.agentToolSchemaService.toOllamaTools([])
+      : [];
 
     if (isSimpleMessage) {
       const systemMessage = this.aiContextService.buildSystemMessage(context, {
@@ -1237,6 +1357,7 @@ export class ConversationService {
     });
 
     let reply = "";
+    let actualModelUsed = null;
     let currentMessages = [...messages];
 
     let toolIterations = 0;
@@ -1296,7 +1417,13 @@ export class ConversationService {
           tools,
           signal: options?.signal,
         })) {
+          if (event.type === "model" && event.model) {
+            actualModelUsed = event.model;
+            continue;
+          }
+
           if (event.type === "usage") {
+            if (event.model) actualModelUsed = event.model;
             usage = {
               inputTokens: usage.inputTokens + (event.usage?.inputTokens ?? 0),
               outputTokens: usage.outputTokens + (event.usage?.outputTokens ?? 0),
@@ -1417,6 +1544,8 @@ export class ConversationService {
 
         currentMessages.push({
           role: "tool",
+          tool_call_id: toolCall.id,
+          name: toolName,
           content: toolResult,
         });
 
@@ -1448,7 +1577,8 @@ export class ConversationService {
 
     await executeTransaction(async (queryRunner) => {
       const manager = queryRunner.manager;
-      const selectedModel = agent.aiModel?.model ?? agent.model ?? null;
+      const selectedModel =
+        actualModelUsed || agent.aiModel?.model || agent.model || null;
 
       const costUsd = this.modelCostCalculatorService
         ? this.modelCostCalculatorService.calculateCost({
@@ -1561,7 +1691,15 @@ export class ConversationService {
           candidate.agentId === agent.id &&
           candidate.visitorId === visitorId
         ) {
-          conversation = candidate;
+          if (!this.isSameBusinessDay(candidate.createdAt, timeZone)) {
+            this._completeConversationEntity(candidate, null);
+            if (typeof this.conversationRepository?.update === "function") {
+              await this.conversationRepository.update(candidate, manager);
+            }
+            this._emitConversationClosed(candidate);
+          } else {
+            conversation = candidate;
+          }
         }
       }
 
@@ -1577,27 +1715,38 @@ export class ConversationService {
           existingActiveConv &&
           !existingActiveConv.isCompleted
         ) {
-          conversation = existingActiveConv;
-        } else {
-          conversation = new Conversation({
-            userId: null,
-            visitorId,
-            projectId: agent.projectId,
-            agentId: agent.id,
-            title: "New Conversation",
-          });
-
-          conversation = await this.conversationRepository.create(
-            conversation,
-            manager,
-          );
+          if (!this.isSameBusinessDay(existingActiveConv.createdAt, timeZone)) {
+            this._completeConversationEntity(existingActiveConv, null);
+            if (typeof this.conversationRepository?.update === "function") {
+              await this.conversationRepository.update(existingActiveConv, manager);
+            }
+            this._emitConversationClosed(existingActiveConv);
+          } else {
+            conversation = existingActiveConv;
+          }
         }
+      }
+
+      if (!conversation) {
+        conversation = new Conversation({
+          userId: null,
+          visitorId,
+          projectId: agent.projectId,
+          agentId: agent.id,
+          title: "New Conversation",
+        });
+
+        conversation = await this.conversationRepository.create(
+          conversation,
+          manager,
+        );
       }
 
       const userMessage = new Message({
         conversationId: conversation.id,
         role: MessageRole.USER,
         content,
+        createdAt: new Date(),
       });
 
       await this.messageRepository.create(userMessage, manager);
@@ -1745,23 +1894,13 @@ export class ConversationService {
 
     const agentTools = await this.agentToolRepository.findByAgentId(agent.id);
 
-    const tools = agentTools
-      .filter((tool) => tool.enabled)
-      .map((tool) => ({
-        type: "function",
-        function: {
-          name: tool.name,
-          description: tool.description,
-          parameters: tool.configuration?.parameters ?? {
-            type: "object",
-            properties: {},
-            required: [],
-          },
-        },
-      }));
+    const tools = this.agentToolSchemaService
+      ? this.agentToolSchemaService.toOllamaTools(agentTools || [])
+      : [];
 
     let currentMessages = [...messages];
     let reply = "";
+    let actualModelUsed = null;
 
     let toolIterations = 0;
     const maxToolIterations = 5;
@@ -1773,6 +1912,10 @@ export class ConversationService {
         maxTokens: agent.maxTokens,
         tools,
       });
+
+      if (response.model) {
+        actualModelUsed = response.model;
+      }
 
       const toolCalls = response.message?.tool_calls ?? [];
 
@@ -1823,6 +1966,8 @@ export class ConversationService {
 
         currentMessages.push({
           role: "tool",
+          tool_call_id: toolCall.id,
+          name: toolName,
           content: toolResult,
         });
       }
@@ -1864,7 +2009,7 @@ export class ConversationService {
           visitorId: conversation.visitorId,
           organizationId: agent.project?.organizationId ?? null,
           networkIdentityHash,
-          modelName: modelName ?? null,
+          modelName: actualModelUsed || modelName || null,
           costUsd: 0,
           inputTokens: 0,
           outputTokens: 0,
@@ -1919,6 +2064,7 @@ export class ConversationService {
     let createdUserMessageId = null;
     let existingAssistantMessage = null;
     let createdAssistantMessage = null;
+    let reply = "";
 
     const requestId = options?.requestId ?? "public-req";
 
@@ -2053,12 +2199,20 @@ export class ConversationService {
               candidate.visitorId === visitorId ||
               candidate.visitorId === null)
           ) {
-            conversation = candidate;
-            console.log("[PublicChatDebug] CONVERSATION_FOUND", {
-              requestId,
-              conversationId: conversation.id,
-              projectId: conversation.projectId,
-            });
+            if (!this.isSameBusinessDay(candidate.createdAt, timeZone)) {
+              this._completeConversationEntity(candidate, null);
+              if (typeof this.conversationRepository?.update === "function") {
+                await this.conversationRepository.update(candidate, manager);
+              }
+              this._emitConversationClosed(candidate);
+            } else {
+              conversation = candidate;
+              console.log("[PublicChatDebug] CONVERSATION_FOUND", {
+                requestId,
+                conversationId: conversation.id,
+                projectId: conversation.projectId,
+              });
+            }
           }
         }
 
@@ -2074,12 +2228,20 @@ export class ConversationService {
             existingActiveConv &&
             !existingActiveConv.isCompleted
           ) {
-            conversation = existingActiveConv;
-            console.log("[PublicChatDebug] CONVERSATION_FOUND", {
-              requestId,
-              conversationId: conversation.id,
-              projectId: conversation.projectId,
-            });
+            if (!this.isSameBusinessDay(existingActiveConv.createdAt, timeZone)) {
+              this._completeConversationEntity(existingActiveConv, null);
+              if (typeof this.conversationRepository?.update === "function") {
+                await this.conversationRepository.update(existingActiveConv, manager);
+              }
+              this._emitConversationClosed(existingActiveConv);
+            } else {
+              conversation = existingActiveConv;
+              console.log("[PublicChatDebug] CONVERSATION_FOUND", {
+                requestId,
+                conversationId: conversation.id,
+                projectId: conversation.projectId,
+              });
+            }
           } else {
             console.log("[PublicChatDebug] CONVERSATION_NOT_FOUND", {
               requestId,
@@ -2184,6 +2346,7 @@ export class ConversationService {
               conversationId: conversation.id,
               role: MessageRole.USER,
               content,
+              createdAt: new Date(),
             });
 
             await this.messageRepository.create(userMessage, manager);
@@ -2379,19 +2542,20 @@ export class ConversationService {
     });
 
     /*
-     * Provider
+     * Provider & Generation with Error Guard
      */
 
-    const providerStartedAt = Date.now();
+    try {
+      const providerStartedAt = Date.now();
 
-    const { providerName, modelName } = this._resolveProviderAndModel(agent);
-    console.log("[PublicChatDebug] AI_PROVIDER_RESOLUTION_START", {
-      requestId,
-      providerName,
-      modelName,
-    });
+      const { providerName, modelName } = this._resolveProviderAndModel(agent);
+      console.log("[PublicChatDebug] AI_PROVIDER_RESOLUTION_START", {
+        requestId,
+        providerName,
+        modelName,
+      });
 
-    const aiProvider = this.aiProviderFactory.getProviderByName(providerName);
+      const aiProvider = this.aiProviderFactory.getProviderByName(providerName);
 
     if (!aiProvider) {
       console.error("[PublicChatDebug] AI_PROVIDER_RESOLUTION_FAILED", {
@@ -2474,27 +2638,10 @@ export class ConversationService {
     // Ensure the current user message is always the final turn in history
     const lastMsg = messages[messages.length - 1];
     if (!lastMsg || lastMsg.role !== "user" || lastMsg.content !== content) {
-      const existingIdx = messages.findLastIndex
-        ? messages.findLastIndex(
-            (m) => m.role === "user" && m.content === content,
-          )
-        : -1;
-      if (existingIdx !== -1) {
-        messages.splice(existingIdx, 1);
-      }
       messages.push({
         role: MessageRole.USER,
         content,
       });
-    }
-
-    // If an immediately preceding message was also a user message (orphaned from a prior failed attempt),
-    // and current turn is a simple greeting, drop the abandoned query so AI greets freshly.
-    if (messages.length >= 2) {
-      const secondLastMsg = messages[messages.length - 2];
-      if (secondLastMsg.role === "user" && isSimpleMessage) {
-        messages.splice(messages.length - 2, 1);
-      }
     }
 
     /*
@@ -2503,7 +2650,9 @@ export class ConversationService {
     const promptBuildStartedAt = Date.now();
     let ragSources = [];
     let ragMs = 0;
-    let tools = [];
+    let tools = this.agentToolSchemaService
+      ? this.agentToolSchemaService.toOllamaTools([])
+      : [];
 
     console.log("[PublicChatDebug] PROMPT_BUILD_START", {
       requestId,
@@ -2581,7 +2730,8 @@ export class ConversationService {
      * Streaming
      */
 
-    let reply = "";
+    reply = "";
+    let actualModelUsed = null;
 
     let currentMessages = [...messages];
 
@@ -2641,7 +2791,13 @@ export class ConversationService {
           tools,
           signal: options?.signal,
         })) {
+          if (event.type === "model" && event.model) {
+            actualModelUsed = event.model;
+            continue;
+          }
+
           if (event.type === "usage") {
+            if (event.model) actualModelUsed = event.model;
             usage = {
               inputTokens: usage.inputTokens + (event.usage?.inputTokens ?? 0),
               outputTokens:
@@ -2797,8 +2953,10 @@ export class ConversationService {
               typeof this.messageRepository.delete === "function"
             ) {
               try {
+                const toDelete = createdUserMessageId;
+                createdUserMessageId = null;
                 await this.messageRepository.delete(
-                  createdUserMessageId,
+                  toDelete,
                   conversation.id,
                 );
               } catch (_) {}
@@ -2812,13 +2970,15 @@ export class ConversationService {
             typeof this.messageRepository.delete === "function"
           ) {
             try {
+              const toDelete = createdUserMessageId;
+              createdUserMessageId = null;
               await this.messageRepository.delete(
-                createdUserMessageId,
+                toDelete,
                 conversation.id,
               );
               console.log("[PublicChatDebug] CLEANED_UP_ORPHANED_USER_MESSAGE", {
                 requestId,
-                messageId: createdUserMessageId,
+                messageId: toDelete,
                 conversationId: conversation.id,
               });
             } catch (cleanupErr) {
@@ -2914,6 +3074,8 @@ export class ConversationService {
 
         currentMessages.push({
           role: "tool",
+          tool_call_id: toolCall.id,
+          name: toolName,
           content: toolResult,
         });
 
@@ -2967,7 +3129,11 @@ export class ConversationService {
       await executeTransaction(async (queryRunner) => {
         const manager = queryRunner.manager;
         const selectedModel =
-          modelName || agent.aiModel?.model || agent.model || null;
+          actualModelUsed ||
+          modelName ||
+          agent.aiModel?.model ||
+          agent.model ||
+          null;
 
         const costUsd = this.modelCostCalculatorService
           ? this.modelCostCalculatorService.calculateCost({
@@ -3135,11 +3301,43 @@ export class ConversationService {
       toolIterations,
     });
 
-    yield {
-      type: "done",
-      conversationId: conversation.id,
-      messageId: createdAssistantMessage?.id || null,
-    };
+      yield {
+        type: "done",
+        conversationId: conversation.id,
+        messageId: createdAssistantMessage?.id || null,
+      };
+    } catch (streamError) {
+      if (
+        reply.trim().length === 0 &&
+        createdUserMessageId &&
+        conversation?.id &&
+        typeof this.messageRepository?.delete === "function"
+      ) {
+        try {
+          const toDelete = createdUserMessageId;
+          createdUserMessageId = null;
+          await this.messageRepository.delete(
+            toDelete,
+            conversation.id,
+          );
+          console.log(
+            "[PublicChatDebug] CLEANED_UP_ORPHANED_USER_MESSAGE_ON_ERROR",
+            {
+              requestId,
+              messageId: toDelete,
+              conversationId: conversation.id,
+              error: streamError.message,
+            },
+          );
+        } catch (cleanupErr) {
+          console.warn(
+            "[PublicChatDebug] FAILED_TO_CLEAN_UP_USER_MESSAGE",
+            cleanupErr.message,
+          );
+        }
+      }
+      throw streamError;
+    }
   }
 
   async getConversationMessages(userId, conversationId) {
@@ -3167,6 +3365,65 @@ export class ConversationService {
     const conversation = await this.getConversation(userId, conversationId);
 
     await this.conversationRepository.delete(conversation.id);
+  }
+
+  _sanitizePublicMessages(conversation, messages) {
+    if (
+      !messages ||
+      messages.length === 0 ||
+      conversation?.isHandover ||
+      conversation?.isCompleted
+    ) {
+      return messages || [];
+    }
+
+    let result = messages;
+    // 1. Prune trailing orphan user message with no assistant reply
+    if (
+      result.length > 0 &&
+      result[result.length - 1].role === MessageRole.USER
+    ) {
+      const orphan = result[result.length - 1];
+      console.log("[PublicChatDebug] PRUNING_ORPHAN_TRAILING_USER_MESSAGE", {
+        conversationId: conversation.id,
+        orphanId: orphan.id,
+      });
+      result = result.slice(0, -1);
+      if (typeof this.messageRepository?.delete === "function") {
+        this.messageRepository
+          .delete(orphan.id, conversation.id)
+          .catch(() => {});
+      }
+    }
+
+    // 2. Prune consecutive orphan user messages (keep only the user message immediately preceding the assistant response)
+    const filtered = [];
+    for (let i = 0; i < result.length; i++) {
+      const current = result[i];
+      const next = result[i + 1];
+      if (
+        current.role === MessageRole.USER &&
+        next &&
+        next.role === MessageRole.USER
+      ) {
+        console.log(
+          "[PublicChatDebug] PRUNING_CONSECUTIVE_ORPHAN_USER_MESSAGE",
+          {
+            conversationId: conversation.id,
+            orphanId: current.id,
+          },
+        );
+        if (typeof this.messageRepository?.delete === "function") {
+          this.messageRepository
+            .delete(current.id, conversation.id)
+            .catch(() => {});
+        }
+        continue;
+      }
+      filtered.push(current);
+    }
+
+    return filtered;
   }
 
   async getPublicConversationMessages(publicKey, conversationId, visitorId) {
@@ -3201,9 +3458,10 @@ export class ConversationService {
       );
     }
 
-    const messages = await this.messageRepository.findByConversationId(
+    const rawMessages = await this.messageRepository.findByConversationId(
       conversation.id,
     );
+    const messages = this._sanitizePublicMessages(conversation, rawMessages);
 
     return {
       conversation: {
@@ -3290,6 +3548,10 @@ export class ConversationService {
         return { conversation: null, messages: [] };
       }
 
+      const timeZone = await this.getCompanyTimezone(
+        agent.project?.organizationId,
+      );
+
       let activeConv = null;
 
       if (conversationId) {
@@ -3304,7 +3566,15 @@ export class ConversationService {
               candidate.visitorId === visitorId ||
               candidate.visitorId === null)
           ) {
-            activeConv = candidate;
+            if (!this.isSameBusinessDay(candidate.createdAt, timeZone)) {
+              this._completeConversationEntity(candidate, null);
+              if (typeof this.conversationRepository?.update === "function") {
+                await this.conversationRepository.update(candidate);
+              }
+              this._emitConversationClosed(candidate);
+            } else {
+              activeConv = candidate;
+            }
           }
         } catch {
           // Fallback to visitor lookup
@@ -3319,7 +3589,15 @@ export class ConversationService {
           );
 
         if (latestConv && !latestConv.isCompleted) {
-          activeConv = latestConv;
+          if (!this.isSameBusinessDay(latestConv.createdAt, timeZone)) {
+            this._completeConversationEntity(latestConv, null);
+            if (typeof this.conversationRepository?.update === "function") {
+              await this.conversationRepository.update(latestConv);
+            }
+            this._emitConversationClosed(latestConv);
+          } else {
+            activeConv = latestConv;
+          }
         }
       }
 
@@ -3327,9 +3605,10 @@ export class ConversationService {
         return { conversation: null, messages: [] };
       }
 
-      const messages = await this.messageRepository.findByConversationId(
+      const rawMessages = await this.messageRepository.findByConversationId(
         activeConv.id,
       );
+      const messages = this._sanitizePublicMessages(activeConv, rawMessages);
 
       return {
         conversation: {

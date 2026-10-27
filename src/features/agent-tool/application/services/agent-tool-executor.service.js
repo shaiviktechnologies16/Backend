@@ -1,6 +1,7 @@
 import { AppError } from "../../../../common/errors/AppError.js";
 import dns from "node:dns/promises";
 import net from "node:net";
+import { websiteFetcherService as defaultWebsiteFetcherService } from "../../../browser/service/website-fetcher.service.js";
 
 const ALLOWED_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 
@@ -187,10 +188,12 @@ export class AgentToolExecutorService {
     workspaceApiKeyRepository,
     encryptionService,
     captureLeadUseCase,
-  }) {
+    websiteFetcherService = null,
+  } = {}) {
     this.workspaceApiKeyRepository = workspaceApiKeyRepository;
     this.encryptionService = encryptionService;
     this.captureLeadUseCase = captureLeadUseCase;
+    this.websiteFetcherService = websiteFetcherService;
   }
 
   async execute(tool, arguments_ = {}, context = {}) {
@@ -202,6 +205,25 @@ export class AgentToolExecutorService {
       argumentsType: typeof arguments_,
       context,
     });
+
+    if (tool.name === "fetch_website" || tool.type === "SYSTEM") {
+      let parsedArgs = arguments_;
+      if (typeof parsedArgs === "string") {
+        try {
+          parsedArgs = JSON.parse(parsedArgs);
+        } catch (_) {}
+      }
+
+      const targetUrl =
+        parsedArgs?.url ||
+        parsedArgs?.targetUrl ||
+        parsedArgs?.websiteUrl ||
+        (typeof parsedArgs === "string" ? parsedArgs : "");
+
+      const fetcher = this.websiteFetcherService || defaultWebsiteFetcherService;
+      return await fetcher.fetch(targetUrl);
+    }
+
     if (tool.type !== "HTTP") {
       throw new AppError(
         `Unsupported agent tool type: ${tool.type}`,

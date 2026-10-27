@@ -23,7 +23,16 @@ export class RefreshTokenUseCase {
       );
     }
 
-    const payload = this.jwtService.verifyRefreshToken(refreshToken);
+    let payload;
+    try {
+      payload = this.jwtService.verifyRefreshToken(refreshToken);
+    } catch {
+      throw new AppError(
+        "Invalid or expired refresh token.",
+        401,
+        "INVALID_REFRESH_TOKEN",
+      );
+    }
     const refreshTokenHash = this.tokenHashService.hash(refreshToken);
 
     const session =
